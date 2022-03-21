@@ -2,6 +2,7 @@
 /.idea/
 /pack/test
 config.json
+!/config/config.json
 cookies.json
 *.conf
 !template.json

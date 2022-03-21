@@ -42,8 +42,6 @@ impl Config {
         if conf.device_id == None {
             conf.device_id = Some(format!("{:x}", md5::compute(&conf.device_name)))
         }
-        // TODO: debug
-        println!("{}", &conf);
         return conf;
     }
 

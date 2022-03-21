@@ -9,9 +9,8 @@ arch=('i686' 'x86_64')
 url='https://github.com/PinkD/corplink-rs'
 license=('GPL2')
 makedepends=('cargo')
-# source=("$pkgname.tar.gz"::"https://github.com/PinkD/corplink-rs/archive/$pkgver.tar.gz")
-source=("$pkgname.tar.gz"::"file:///tmp/$pkgver.tar.gz")
-md5sums=('SKIP')
+source=("$pkgname.tar.gz"::"https://github.com/PinkD/corplink-rs/archive/$pkgver.tar.gz")
+md5sums=('e542e9ddc866b679bedd5ed2bbc628b1')
 
 build() {
   cd "$srcdir/$_pkgbase-$pkgver"

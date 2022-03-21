@@ -7,6 +7,7 @@ After=network.target
 WorkingDirectory=/etc/corplink
 Type=simple
 ExecStart=/usr/bin/corplink-rs /etc/corplink/config.json
+KillSignal=SIGINT
 
 [Install]
 WantedBy=multi-user.target
