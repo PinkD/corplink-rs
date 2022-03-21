@@ -1,0 +1,27 @@
+# Maintainer: PinkD <443657547@qq.com>
+
+pkgname=corplink-rs
+_pkgbase=corplink-rs
+pkgver=1.0
+pkgrel=1
+pkgdesc='Corplink client written in Rust'
+arch=('i686' 'x86_64')
+url='https://github.com/PinkD/corplink-rs'
+license=('GPL2')
+makedepends=('cargo')
+# source=("$pkgname.tar.gz"::"https://github.com/PinkD/corplink-rs/archive/$pkgver.tar.gz")
+source=("$pkgname.tar.gz"::"file:///tmp/$pkgver.tar.gz")
+md5sums=('SKIP')
+
+build() {
+  cd "$srcdir/$_pkgbase-$pkgver"
+  cargo build --release
+}
+
+package() {
+  cd "$srcdir/$_pkgbase-$pkgver"
+  install -Dm 755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
+  install -Dm 644 "config/config.json" "$pkgdir/etc/corplink/config.json"
+  install -Dm 644 "systemd/$pkgname.service" "$pkgdir/usr/lib/systemd/system/$pkgname.service"
+  install -Dm 644 "systemd/$pkgname@.service" "$pkgdir/usr/lib/systemd/system/$pkgname@.service"
+}

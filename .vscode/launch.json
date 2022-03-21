@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests rust program",
+            "program": "${workspaceRoot}/target/debug/corplink-rs",
+            // "cargo": {
+            //     "args": [
+            //         "run"
+            //     ]
+            // },
+            "args": [],
+            "cwd": "${workspaceRoot}"
+        }
+    ]
+}

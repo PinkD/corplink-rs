@@ -1,0 +1,21 @@
+[package]
+name = "corplink-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex = "1"
+reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies"] }
+tokio = { version = "1.13.0", features = ["full"] }
+futures = "0.3"
+serde_json = "1.0"
+serde = "1.0"
+cookie = "0.15"
+cookie_store = "0.15"
+reqwest_cookie_store = "0.2"
+tinytemplate = "1.2"
+basic-otp = "0.1"
+md5 = "0.7"
+sha2 = "0.10"
+base32 = "0.4"
+# string_template = "0.2"

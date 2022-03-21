@@ -1,0 +1,12 @@
+[Unit]
+Description=Corplink client written in Rust
+Documentation=https://github.com/PinkD/corplink-rs
+After=network.target
+
+[Service]
+WorkingDirectory=/etc/corplink
+Type=simple
+ExecStart=/usr/bin/corplink-rs /etc/corplink/%i.json
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,7 @@
+/target/
+/.idea/
+/pack/test
+config.json
+cookies.json
+*.conf
+!template.json
