@@ -10,7 +10,7 @@ url='https://github.com/PinkD/corplink-rs'
 license=('GPL2')
 makedepends=('cargo')
 source=("$pkgname.tar.gz"::"https://github.com/PinkD/corplink-rs/archive/$pkgver.tar.gz")
-md5sums=('e542e9ddc866b679bedd5ed2bbc628b1')
+md5sums=('be4c85507b5c0c3834be5f565c131d84')
 
 build() {
   cd "$srcdir/$_pkgbase-$pkgver"
@@ -20,7 +20,7 @@ build() {
 package() {
   cd "$srcdir/$_pkgbase-$pkgver"
   install -Dm 755 "target/release/$pkgname" "$pkgdir/usr/bin/$pkgname"
-  install -Dm 644 "config/config.json" "$pkgdir/etc/corplink/config.json"
+  install -Dm 600 "config/config.json" "$pkgdir/etc/corplink/config.json"
   install -Dm 644 "systemd/$pkgname.service" "$pkgdir/usr/lib/systemd/system/$pkgname.service"
   install -Dm 644 "systemd/$pkgname@.service" "$pkgdir/usr/lib/systemd/system/$pkgname@.service"
 }
