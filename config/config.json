@@ -2,7 +2,7 @@
     "username": "your_name",
     "password": "your_pass",
     "device_name": "device",
-    "server": "your_server",
+    "server": "server.com:443",
     // will generate corplink.conf
     "conf_name": "corplink",
     // will generate conf in /etc/wireguard

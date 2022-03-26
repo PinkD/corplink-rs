@@ -46,6 +46,8 @@ fn parse_arg() -> String {
 
 #[tokio::main]
 async fn main() {
+    print_version();
+    return;
     let conf_file = parse_arg();
     let conf = Config::from_file(&conf_file).await;
     let name = conf.conf_name.clone();
@@ -123,4 +125,10 @@ async fn main() {
         println!("stopped")
     }
     println!("exited");
+}
+
+fn print_version() {
+    let pkg_name = env!("CARGO_PKG_NAME");
+    let pkg_version = env!("CARGO_PKG_VERSION");
+    println!("running {}@{}", pkg_name, pkg_version);
 }
