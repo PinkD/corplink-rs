@@ -26,21 +26,12 @@ systemctl start corplink-rs@test.service
   "username": "your_name",
   "password": "your_pass",
   "device_name": "device",
-  "public_key": "public_key",
-  "private_key": "private_key",
   "server": "your_server",
   // will generate corplink.conf
   "conf_name": "corplink",
   // will generate conf in /etc/wireguard
   "conf_dir": "/etc/wireguard"
 }
-```
-
-## wg key 生成
-
-```shell
-wg genkey | tee pri | wg pubkey > pub
-cat pub pri
 ```
 
 # 原理和分析
@@ -101,7 +92,14 @@ graph TD;
 # TODO
 
 - [ ] 自动使用从服务器返回的请求中的时间戳同步时间
-- [ ] 自动生成 wg key
+- [x] 自动生成 wg key
+
+# Changelog
+
+- 0.1.1
+  - support generate wg key
+- 0.1.0
+  - first version
 
 # 参考链接
 

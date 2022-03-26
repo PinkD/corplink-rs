@@ -2,8 +2,6 @@
     "username": "your_name",
     "password": "your_pass",
     "device_name": "device",
-    "public_key": "public_key",
-    "private_key": "private_key",
     "server": "your_server",
     // will generate corplink.conf
     "conf_name": "corplink",

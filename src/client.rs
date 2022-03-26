@@ -397,14 +397,14 @@ impl Client {
             return Err(Error::Error("no vpn available".to_string()));
         }
 
-        let key = self.conf.public_key.clone();
+        let key = self.conf.public_key.clone().unwrap();
         println!("try to get wg conf from remote");
         let wg_info = self.fetch_peer_info(&key).await?;
         let mtu = wg_info.setting.vpn_mtu;
         let dns = wg_info.setting.vpn_dns;
         let peer_key = wg_info.public_key;
-        let public_key = self.conf.public_key.clone();
-        let private_key = self.conf.private_key.clone();
+        let public_key = self.conf.public_key.clone().unwrap();
+        let private_key = self.conf.private_key.clone().unwrap();
         let mut route = wg_info.setting.vpn_route_split;
         // remove dns because it's useless
         if route.len() != 0 && route[0].starts_with(&dns) {

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 
 use crate::state::State;
+use crate::utils;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -13,8 +14,8 @@ pub struct Config {
     pub code: Option<String>,
     pub device_name: String,
     pub device_id: Option<String>,
-    pub public_key: String,
-    pub private_key: String,
+    pub public_key: Option<String>,
+    pub private_key: Option<String>,
     pub server: String,
     pub conf_name: String,
     pub conf_dir: String,
@@ -32,21 +33,48 @@ impl fmt::Display for Config {
 
 impl Config {
     pub async fn from_file(file: &str) -> Config {
-        let conf_str = fs::read_to_string(file).await
+        let conf_str = fs::read_to_string(file)
+            .await
             .unwrap_or_else(|e| panic!("failed to read config file {}: {}", file, e));
 
         let mut conf: Config = serde_json::from_str(&conf_str[..])
             .unwrap_or_else(|e| panic!("failed to parse config file {}: {}", file, e));
 
         conf.conf_file = Some(file.to_string());
+        let mut update_conf = false;
         if conf.device_id == None {
-            conf.device_id = Some(format!("{:x}", md5::compute(&conf.device_name)))
+            conf.device_id = Some(format!("{:x}", md5::compute(&conf.device_name)));
+            update_conf = true;
+        }
+        match &conf.private_key {
+            Some(private_key) => match conf.public_key {
+                Some(_) => {
+                    // both keys exist, do nothing
+                }
+                None => {
+                    // only private key exists, generate public from private
+                    let public_key = utils::gen_public_key_from_private(private_key).unwrap();
+                    conf.public_key = Some(public_key);
+                    update_conf = true;
+                }
+            },
+            None => {
+                // no key exists, generate new
+                let (public_key, private_key) = utils::gen_wg_keypair();
+                (conf.public_key, conf.private_key) = (Some(public_key), Some(private_key));
+                update_conf = true;
+            }
+        }
+        if update_conf {
+            conf.save().await;
         }
         return conf;
     }
 
     pub async fn save(&self) {
-        fs::write(&self.conf_file.as_ref().unwrap(), format!("{}", &self)).await.unwrap();
+        fs::write(&self.conf_file.as_ref().unwrap(), format!("{}", &self))
+            .await
+            .unwrap();
     }
 }
 
