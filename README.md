@@ -91,11 +91,13 @@ graph TD;
 
 # TODO
 
-- [ ] 自动使用从服务器返回的请求中的时间戳同步时间
+- [x] 自动使用从服务器返回的请求中的时间戳同步时间
 - [x] 自动生成 wg key
 
 # Changelog
 
+- 0.1.2
+  - support time correction for totp
 - 0.1.1
   - support generate wg key
 - 0.1.0

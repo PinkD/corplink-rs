@@ -11,7 +11,7 @@
             //         "run"
             //     ]
             // },
-            "args": [],
+            "args": ["/tmp/config.json"],
             "cwd": "${workspaceRoot}"
         }
     ]

@@ -1,6 +1,6 @@
 [package]
 name = "corplink-rs"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [dependencies]
@@ -14,11 +14,16 @@ cookie = "0.15"
 cookie_store = "0.15"
 reqwest_cookie_store = "0.2"
 tinytemplate = "1.2"
-basic-otp = "0.1"
 md5 = "0.7"
 sha2 = "0.10"
 base32 = "0.4"
 base64 = "0.13"
-# string_template = "0.2"
 rand = "0.7"
 x25519-dalek = "1"
+httpdate = "1.0"
+
+# string_template = "0.2"
+# dependency for basic-otp
+# basic-otp = "0.1"
+hmac-sha1 = "0.1"
+byteorder = "1.2"

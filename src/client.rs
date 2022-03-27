@@ -1,12 +1,11 @@
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{fs, io};
 
-use basic_otp::totp;
 use cookie_store::{Cookie, CookieStore};
-use reqwest::{ClientBuilder, Url};
+use reqwest::{ClientBuilder, Response, Url};
 use reqwest_cookie_store::CookieStoreMutex;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
@@ -16,6 +15,7 @@ use crate::api::{ApiName, ApiUrl};
 use crate::config::{Config, WgConf};
 use crate::resp::{Resp, RespLogin, RespLoginMethod, RespVpnInfo, RespWgInfo};
 use crate::state::State;
+use crate::totp::{totp_offset, TIME_STEP};
 use crate::utils;
 
 const COOKIE_FILE: &str = "cookies.json";
@@ -46,6 +46,7 @@ pub struct Client {
     cookie: Arc<CookieStoreMutex>,
     c: reqwest::Client,
     api_url: ApiUrl,
+    date_offset_sec: i32,
 }
 
 unsafe impl Send for Client {}
@@ -79,6 +80,7 @@ impl Client {
             cookie: Arc::clone(&cookie_store),
             c,
             api_url: ApiUrl::new(&conf_bak),
+            date_offset_sec: 0,
         });
     }
 
@@ -117,6 +119,7 @@ impl Client {
             return Err(Error::ReqwestError(err));
         }
         let resp = resp.unwrap();
+        self.parse_time_offset_from_date_header(&resp);
 
         for (name, _) in resp.headers() {
             if name.to_string().to_lowercase() == "set-cookie" {
@@ -130,6 +133,29 @@ impl Client {
             return Err(Error::ReqwestError(err));
         }
         Ok(resp.unwrap())
+    }
+
+    fn parse_time_offset_from_date_header(&mut self, resp: &Response) {
+        let headers = resp.headers();
+        if headers.contains_key("date") {
+            let date = &headers["date"];
+            match httpdate::parse_http_date(date.to_str().unwrap()) {
+                Ok(date) => {
+                    let now = SystemTime::now();
+                    self.date_offset_sec = if now < date {
+                        let date_offset = date.duration_since(now).unwrap();
+                        date_offset.as_secs().try_into().unwrap()
+                    } else {
+                        let date_offset = now.duration_since(date).unwrap();
+                        let offset: i32 = date_offset.as_secs().try_into().unwrap();
+                        -offset
+                    };
+                }
+                Err(e) => {
+                    println!("failed to parse date in header, ignore it: {}", e);
+                }
+            }
+        }
     }
 
     async fn request_imut<T: DeserializeOwned>(
@@ -351,9 +377,13 @@ impl Client {
         if let Some(code) = &self.conf.code {
             if !code.is_empty() {
                 let code = utils::b32_decode(code);
-                let raw_otp = totp(code.as_slice());
-                otp = format!("{:06}", raw_otp);
-                println!("2fa code generated: {}", &otp);
+                let offset = self.date_offset_sec / TIME_STEP as i32;
+                let raw_otp = totp_offset(code.as_slice(), offset);
+                otp = format!("{:06}", raw_otp.code);
+                println!(
+                    "2fa code generated: {}, {} seconds left",
+                    &otp, raw_otp.secs_left
+                );
             }
         }
         if otp.is_empty() {

@@ -4,6 +4,7 @@ mod config;
 mod resp;
 mod state;
 mod template;
+mod totp;
 mod utils;
 mod wg;
 
@@ -47,7 +48,6 @@ fn parse_arg() -> String {
 #[tokio::main]
 async fn main() {
     print_version();
-    return;
     let conf_file = parse_arg();
     let conf = Config::from_file(&conf_file).await;
     let name = conf.conf_name.clone();

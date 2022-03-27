@@ -1,4 +1,4 @@
-// code from string_template
+// code from string_template 0.2
 
 use regex::Regex;
 use serde::Serialize;
