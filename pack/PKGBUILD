@@ -10,7 +10,8 @@ url='https://github.com/PinkD/corplink-rs'
 license=('GPL2')
 makedepends=('cargo')
 source=("$pkgname.tar.gz"::"https://github.com/PinkD/corplink-rs/archive/$pkgver.tar.gz")
-md5sums=('b5da2f08eedb46a60dff750ceca6f087')
+# use SKIP to avoid update PKGBUILD everytime
+md5sums=('SKIP')
 backup=(etc/corplink/config.json)
 
 build() {
