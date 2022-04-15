@@ -1,0 +1,35 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "[0-9]+\\.[0-9]+"
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout code
+        uses: actions/checkout@v2
+      - name: build package
+        id: build_package
+        uses: PinkD/arch-pkgbuild-builder@v2.0
+        with:
+          target: "pkgbuild"
+          pkgname: "pack"
+      - name: create release
+        uses: actions/create-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: ${{ github.ref }}
+        env:
+          # (required)
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: upload package to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: pack/corplink-rs-*.pkg.tar.zst
+          tag: ${{ github.ref }}
+          overwrite: true
+          file_glob: true
