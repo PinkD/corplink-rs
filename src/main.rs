@@ -12,7 +12,6 @@ use std::{env, path::Path, process::exit};
 
 use client::Client;
 use config::{Config, WgConf};
-use wg::{gen_wg_conf, start_wg_quick, stop_wg_quick};
 
 fn print_usage_and_exit(name: &str, conf: &str) {
     println!("usage:\n\t{} {}", name, conf);
@@ -45,6 +44,8 @@ fn parse_arg() -> String {
     return conf_file;
 }
 
+pub const ETIMEDOUT: i32 = 110;
+
 #[tokio::main]
 async fn main() {
     print_version();
@@ -55,6 +56,7 @@ async fn main() {
     let mut c = Client::new(conf).unwrap();
     let mut logout_retry = true;
     let wg_conf: Option<WgConf>;
+
     loop {
         if c.need_login() {
             println!("not login yet, try to login");
@@ -81,15 +83,13 @@ async fn main() {
     }
     let wg_conf = wg_conf.unwrap();
     let mut started = false;
+    let mut exit_code = 0;
     tokio::select! {
-        // keep alive
-        _ = c.keep_alive_vpn(&wg_conf, 60)=>{},
-
         // start service and handle signal
         _ = async {
             let conf_path = Path::new(&conf_dir).join(format!("{}.conf", name));
             println!("generating config to {}", &conf_path.to_str().unwrap());
-            match gen_wg_conf(&conf_path, &wg_conf).await {
+            match wg::gen_wg_conf(&conf_path, &wg_conf).await {
                 Ok(_) => {},
                 Err(e) => {
                     println!("failed to generate wg conf: {}",e);
@@ -98,7 +98,7 @@ async fn main() {
             }
             // no error because user can start it manually
             println!("start {}", utils::service_name(&name));
-            start_wg_quick(&name).await;
+            wg::start_wg_quick(&name).await;
             started = true;
 
             match tokio::signal::ctrl_c().await {
@@ -108,23 +108,35 @@ async fn main() {
                 },
             }
             println!("ctrl+v received");
-        }=>{
-            println!("exiting...");
+        } => {},
+
+        // keep alive
+        _ = c.keep_alive_vpn(&wg_conf, 60) => {
+            exit_code = ETIMEDOUT;
+        },
+
+        // check wg handshake and exit if timeout
+        _ = async {
+            wg::check_wg_connection(&name).await;
+            println!("last handshake timeout");
+        } => {
+            exit_code = ETIMEDOUT;
         },
     }
 
     // shutdown
-    println!("disconnecting...");
+    println!("disconnecting vpn...");
     match c.disconnect_vpn(&wg_conf).await {
         Ok(_) => {}
         Err(e) => println!("failed to disconnect vpn: {}", e),
     };
     if started {
         println!("stopping service...");
-        stop_wg_quick(&name).await;
+        wg::stop_wg_quick(&name).await;
         println!("stopped")
     }
     println!("exited");
+    std::process::exit(exit_code)
 }
 
 fn print_version() {

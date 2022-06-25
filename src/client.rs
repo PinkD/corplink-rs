@@ -454,12 +454,15 @@ impl Client {
         Ok(wg_conf)
     }
 
-    pub async fn keep_alive_vpn(&self, conf: &WgConf, interval: u64) -> Result<(), Error> {
+    pub async fn keep_alive_vpn(&self, conf: &WgConf, interval: u64) {
         loop {
             println!("keep alive");
             match self.keep_alive_vpn_internal(&conf).await {
                 Ok(_) => (),
-                Err(err) => return Err(Error::Error(format!("keep alive error: {}", err))),
+                Err(err) => {
+                    println!("keep alive error: {}", err);
+                    return;
+                }
             }
             tokio::time::sleep(Duration::from_secs(interval)).await;
         }

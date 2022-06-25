@@ -93,10 +93,12 @@ graph TD;
 
 - [x] 自动使用从服务器返回的请求中的时间戳同步时间
 - [x] 自动生成 wg key
-- [ ] 修复服务端异常断开连接后客户端不会退出的问题
+- [x] 修复服务端异常断开连接后客户端不会退出的问题
 
 # Changelog
 
+- 0.1.3
+  - disconnect if wireguard handshake timeout
 - 0.1.2
   - support time correction for totp
 - 0.1.1

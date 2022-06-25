@@ -21,6 +21,7 @@ base64 = "0.13"
 rand = "0.7"
 x25519-dalek = "1"
 httpdate = "1.0"
+chrono = "0.4.19"
 
 # string_template = "0.2"
 # dependency for basic-otp
