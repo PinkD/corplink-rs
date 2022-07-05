@@ -21,15 +21,48 @@ systemctl start corplink-rs@test.service
 
 # 配置文件实例
 
+最小配置
+
 ```json
 {
+  "company_name": "company code name",
+  "username": "your_name"
+}
+```
+
+推荐配置(自用配置)
+
+```json
+{
+  "company_name": "company code name",
   "username": "your_name",
   "password": "your_pass",
-  "device_name": "device",
-  "server": "your_server",
-  // will generate corplink.conf
+  "platform": "ldap",
   "conf_name": "corplink",
-  // will generate conf in /etc/wireguard
+  "conf_dir": "/etc/wireguard"
+}
+```
+
+完整配置
+
+```json
+{
+  "company_name": "company code name",
+  "username": "your_name",
+  // support sha256sum hashed pass if you don't use ldap, will ask email for code if not provided
+  "password": "your_pass",
+  // default is feilian, can be feilian/ldap/feishu, feishu is not supported yet
+  "platform": "ldap",
+  "code": "totp code",
+  // default is DollarOS(not CentOS)
+  "device_name": "any string to describe your device",
+  "device_id": "md5 of device_name or any string with same format",
+  "public_key": "wg public key, can be generated from private key",
+  "private_key": "wg private key",
+  "server": "server link",
+  // will generate corplink.conf for wg
+  "conf_name": "corplink",
+  // will generate conf in /etc/wireguard, default is current dir
   "conf_dir": "/etc/wireguard"
 }
 ```
@@ -97,6 +130,11 @@ graph TD;
 
 # Changelog
 
+- 0.1.4
+  - get company name from company code automatically
+  - support ldap
+  - check and skip tcp wg server
+  - optimize config
 - 0.1.3
   - disconnect if wireguard handshake timeout
 - 0.1.2

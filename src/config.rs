@@ -7,18 +7,25 @@ use serde_json;
 use crate::state::State;
 use crate::utils;
 
+const DEFAULT_DEVICE_NAME: &str = "DollarOS";
+const DEFAULT_CONF_DIR: &str = ".";
+const DEFAULT_CONF_NAME: &str = "corplink";
+pub const PLATFORM_LDAP: &str = "ldap";
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
+    pub company_name: String,
     pub username: String,
     pub password: Option<String>,
+    pub platform: Option<String>,
     pub code: Option<String>,
-    pub device_name: String,
+    pub device_name: Option<String>,
     pub device_id: Option<String>,
     pub public_key: Option<String>,
     pub private_key: Option<String>,
-    pub server: String,
-    pub conf_name: String,
-    pub conf_dir: String,
+    pub server: Option<String>,
+    pub conf_name: Option<String>,
+    pub conf_dir: Option<String>,
     #[serde(skip_serializing)]
     pub conf_file: Option<String>,
     pub state: Option<State>,
@@ -42,8 +49,23 @@ impl Config {
 
         conf.conf_file = Some(file.to_string());
         let mut update_conf = false;
+        if conf.conf_dir == None {
+            conf.conf_dir = Some(DEFAULT_CONF_DIR.to_string());
+            update_conf = true;
+        }
+        if conf.conf_name == None {
+            conf.conf_name = Some(DEFAULT_CONF_NAME.to_string());
+            update_conf = true;
+        }
+        if conf.device_name == None {
+            conf.device_name = Some(DEFAULT_DEVICE_NAME.to_string());
+            update_conf = true;
+        }
         if conf.device_id == None {
-            conf.device_id = Some(format!("{:x}", md5::compute(&conf.device_name)));
+            conf.device_id = Some(format!(
+                "{:x}",
+                md5::compute(&conf.device_name.clone().unwrap())
+            ));
             update_conf = true;
         }
         match &conf.private_key {

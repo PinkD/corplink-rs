@@ -50,9 +50,30 @@ pub const ETIMEDOUT: i32 = 110;
 async fn main() {
     print_version();
     let conf_file = parse_arg();
-    let conf = Config::from_file(&conf_file).await;
-    let name = conf.conf_name.clone();
-    let conf_dir = conf.conf_dir.clone();
+    let mut conf = Config::from_file(&conf_file).await;
+    let name = conf.conf_name.clone().unwrap();
+    let conf_dir = conf.conf_dir.clone().unwrap();
+    match conf.server {
+        Some(_) => {}
+        None => match client::get_company_url(conf.company_name.as_str()).await {
+            Ok(resp) => {
+                println!(
+                    "company name is {}(zh)/{}(en) server is {}",
+                    resp.zh_name, resp.en_name, resp.domain
+                );
+                conf.server = Some(resp.domain);
+                conf.save().await;
+            }
+            Err(err) => {
+                println!(
+                    "failed to fetch company server from company name {}: {}",
+                    conf.company_name, err
+                );
+                exit(1);
+            }
+        },
+    }
+
     let mut c = Client::new(conf).unwrap();
     let mut logout_retry = true;
     let wg_conf: Option<WgConf>;
@@ -136,7 +157,7 @@ async fn main() {
         println!("stopped")
     }
     println!("exited");
-    std::process::exit(exit_code)
+    exit(exit_code)
 }
 
 fn print_version() {

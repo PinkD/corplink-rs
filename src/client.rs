@@ -11,15 +11,15 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
 use sha2::Digest;
 
-use crate::api::{ApiName, ApiUrl};
-use crate::config::{Config, WgConf};
-use crate::resp::{Resp, RespLogin, RespLoginMethod, RespVpnInfo, RespWgInfo};
+use crate::api::{ApiName, ApiUrl, URL_GET_COMPANY};
+use crate::config::{Config, WgConf, PLATFORM_LDAP};
+use crate::resp::*;
 use crate::state::State;
 use crate::totp::{totp_offset, TIME_STEP};
 use crate::utils;
 
 const COOKIE_FILE: &str = "cookies.json";
-const USER_AGENT: &str = "CorpLink/20500 (GooglePixel; Android 10; en)";
+const USER_AGENT: &str = "CorpLink/201000 (GooglePixel; Android 10; en)";
 
 #[derive(Debug)]
 pub enum Error {
@@ -53,6 +53,37 @@ unsafe impl Send for Client {}
 
 unsafe impl Sync for Client {}
 
+pub async fn get_company_url(code: &str) -> Result<RespCompany, Error> {
+    let c = ClientBuilder::new()
+        // alow invalid certs because this cert is signed by corplink
+        .danger_accept_invalid_certs(true)
+        .build();
+    if let Err(err) = c {
+        return Err(Error::ReqwestError(err));
+    }
+    let c = c.unwrap();
+    let mut m = Map::new();
+    m.insert("code".to_string(), json!(code));
+    let body = serde_json::to_string(&m).unwrap();
+
+    let resp = c.post(URL_GET_COMPANY).body(body).send().await;
+    if let Err(err) = resp {
+        return Err(Error::ReqwestError(err));
+    }
+    let resp = resp.unwrap().json::<Resp<RespCompany>>().await;
+    if let Err(err) = resp {
+        return Err(Error::ReqwestError(err));
+    }
+    let resp = resp.unwrap();
+    match resp.code {
+        0 => Ok(resp.data.unwrap()),
+        _ => {
+            let msg = resp.message.unwrap();
+            Err(Error::Error(msg))
+        }
+    }
+}
+
 impl Client {
     pub fn new(conf: Config) -> Result<Client, Error> {
         let cookie_store = {
@@ -67,6 +98,8 @@ impl Client {
         let c = ClientBuilder::new()
             // alow invalid certs because this cert is signed by corplink
             .danger_accept_invalid_certs(true)
+            // for debug
+            // .proxy(reqwest::Proxy::all("socks5://192.168.111.233:8001").unwrap())
             .user_agent(USER_AGENT)
             .cookie_provider(Arc::clone(&cookie_store))
             .build();
@@ -107,18 +140,20 @@ impl Client {
         body: Option<Map<String, Value>>,
     ) -> Result<Resp<T>, Error> {
         let url = self.api_url.get_api_url(&api);
-        let resp = match body {
+
+        let rb = match body {
             Some(body) => {
                 let body = serde_json::to_string(&body).unwrap();
-                self.c.post(url).body(body).send().await
+                self.c.post(url).body(body)
             }
-            None => self.c.get(url).send().await,
+            None => self.c.get(url),
         };
 
-        if let Err(err) = resp {
-            return Err(Error::ReqwestError(err));
-        }
-        let resp = resp.unwrap();
+        let resp = match rb.send().await {
+            Ok(r) => r,
+            Err(err) => return Err(Error::ReqwestError(err)),
+        };
+
         self.parse_time_offset_from_date_header(&resp);
 
         for (name, _) in resp.headers() {
@@ -156,31 +191,6 @@ impl Client {
                 }
             }
         }
-    }
-
-    async fn request_imut<T: DeserializeOwned>(
-        &self,
-        api: ApiName,
-        body: Option<Map<String, Value>>,
-    ) -> Result<Resp<T>, Error> {
-        let url = self.api_url.get_api_url(&api);
-        let resp = match body {
-            Some(body) => {
-                let body = serde_json::to_string(&body).unwrap();
-                self.c.post(url).body(body).send().await
-            }
-            None => self.c.get(url).send().await,
-        };
-
-        if let Err(err) = resp {
-            return Err(Error::ReqwestError(err));
-        }
-        let resp = resp.unwrap();
-        let resp = resp.json::<Resp<T>>().await;
-        if let Err(err) = resp {
-            return Err(Error::ReqwestError(err));
-        }
-        Ok(resp.unwrap())
     }
 
     pub fn need_login(&self) -> bool {
@@ -247,13 +257,23 @@ impl Client {
 
     async fn login_with_password(&mut self) -> Result<String, Error> {
         let mut password = self.conf.password.as_ref().unwrap().clone();
-        if password.len() != 64 {
-            let mut sha = sha2::Sha256::new();
-            sha.update(password.as_bytes());
-            password = format!("{:x}", sha.finalize());
-        } // else: password already convert to sha256sum
         let mut m = Map::new();
-        m.insert("forget_password".to_string(), json!(false));
+        if let Some(platfrom) = self.conf.platform.clone() {
+            match platfrom.as_str() {
+                PLATFORM_LDAP => {
+                    m.insert("platform".to_string(), json!(PLATFORM_LDAP));
+                }
+                // TODO: support feishu
+                // feilian
+                _ => {
+                    if password.len() != 64 {
+                        let mut sha = sha2::Sha256::new();
+                        sha.update(password.as_bytes());
+                        password = format!("{:x}", sha.finalize());
+                    } // else: password already convert to sha256sum
+                }
+            }
+        }
         m.insert("password".to_string(), json!(password));
         m.insert("user_name".to_string(), json!(&self.conf.username));
 
@@ -329,30 +349,27 @@ impl Client {
     async fn ping_vpn(&mut self, ip: String, api_port: u16) -> bool {
         // config cookie
         let mut cookie = self.cookie.lock().unwrap();
-        let mut domain = self.conf.server.clone();
-        if domain.contains(":") {
-            domain = domain.split(":").collect::<Vec<&str>>()[0].to_string();
-        }
-        domain = format!("https://{}", domain);
+        let server_url = self.conf.server.clone().unwrap();
 
+        let mut url = Url::from_str(&server_url).unwrap();
         let mut cookies: Vec<Cookie> = Vec::new();
         for c in cookie.iter_any() {
-            if c.domain.matches(&Url::from_str(&domain).unwrap()) {
+            if c.domain.matches(&url.clone()) {
                 cookies.push(c.clone());
             }
         }
-        domain = format!("https://{}", &ip);
+        url.set_host(Some(ip.as_str())).unwrap();
+        url.set_port(Some(api_port)).unwrap();
         for c in cookies {
-            let url = &Url::from_str(&domain).unwrap();
             let mut c = cookie::Cookie::new(c.name().to_string(), c.value().to_string());
             c.set_domain(ip.clone());
-            let c = Cookie::try_from_raw_cookie(&c, url).unwrap();
-            cookie.insert(c, url).unwrap();
+            let c = Cookie::try_from_raw_cookie(&c, &url.clone()).unwrap();
+            cookie.insert(c, &url.clone()).unwrap();
         }
         drop(cookie);
+        self.save_cookie();
 
-        self.api_url.vpn_param.ip = ip.clone();
-        self.api_url.vpn_param.port = api_port;
+        self.api_url.vpn_param.url = url.to_string().trim_end_matches("/").to_string();
         let result = self.request::<String>(ApiName::PingVPN, None).await;
         match result {
             Ok(resp) => match resp.code {
@@ -414,12 +431,27 @@ impl Client {
         println!("found {} vpn(s)", vpn_info.len());
         let mut vpn_addr = String::new();
         for vpn in vpn_info {
-            println!("check if {}:{} is available", &vpn.ip, &vpn.vpn_port);
+            let mode = match vpn.protocol_mode {
+                1 => "tcp",
+                2 => "udp",
+                _ => "unknow protocol",
+            };
+            println!(
+                "check if {} vpn {}:{} is available",
+                mode, &vpn.ip, &vpn.vpn_port
+            );
             vpn_addr = format!("{}:{}", &vpn.ip, vpn.vpn_port);
             if self.ping_vpn(vpn.ip, vpn.api_port).await {
                 println!("available");
-                avalaible = true;
-                break;
+                match mode {
+                    "udp" => {
+                        avalaible = true;
+                        break;
+                    }
+                    _ => {
+                        println!("we don't support {} wg for now", mode)
+                    }
+                };
             }
             println!("not available");
         }
@@ -454,7 +486,7 @@ impl Client {
         Ok(wg_conf)
     }
 
-    pub async fn keep_alive_vpn(&self, conf: &WgConf, interval: u64) {
+    pub async fn keep_alive_vpn(&mut self, conf: &WgConf, interval: u64) {
         loop {
             println!("keep alive");
             match self.keep_alive_vpn_internal(&conf).await {
@@ -468,7 +500,7 @@ impl Client {
         }
     }
 
-    async fn keep_alive_vpn_internal(&self, conf: &WgConf) -> Result<(), Error> {
+    async fn keep_alive_vpn_internal(&mut self, conf: &WgConf) -> Result<(), Error> {
         let mut m = Map::new();
         m.insert("ip".to_string(), json!(conf.address));
         m.insert("public_key".to_string(), json!(conf.public_key));
@@ -476,7 +508,7 @@ impl Client {
         m.insert("type".to_string(), json!("100"));
 
         let resp = self
-            .request_imut::<Map<String, Value>>(ApiName::KeepAliveVPN, Some(m))
+            .request::<Map<String, Value>>(ApiName::KeepAliveVPN, Some(m))
             .await?;
         match resp.code {
             0 => Ok(()),
@@ -488,14 +520,14 @@ impl Client {
         }
     }
 
-    pub async fn disconnect_vpn(&self, wg_conf: &WgConf) -> Result<(), Error> {
+    pub async fn disconnect_vpn(&mut self, wg_conf: &WgConf) -> Result<(), Error> {
         let mut m = Map::new();
         m.insert("ip".to_string(), json!(wg_conf.address));
         m.insert("public_key".to_string(), json!(wg_conf.public_key));
         m.insert("mode".to_string(), json!("Split"));
         m.insert("type".to_string(), json!("101"));
         let resp = self
-            .request_imut::<Map<String, Value>>(ApiName::DisconnectVPN, Some(m))
+            .request::<Map<String, Value>>(ApiName::DisconnectVPN, Some(m))
             .await?;
         match resp.code {
             0 => Ok(()),

@@ -1,6 +1,8 @@
 [Unit]
 Description=Corplink client written in Rust
 Documentation=https://github.com/PinkD/corplink-rs
+StartLimitIntervalSec=300s
+StartLimitBurst=3
 After=network.target
 
 [Service]
@@ -8,6 +10,8 @@ WorkingDirectory=/etc/corplink
 Type=simple
 ExecStart=/usr/bin/corplink-rs /etc/corplink/config.json
 KillSignal=SIGINT
+Restart=on-failure
+RestartSec=60s
 
 [Install]
 WantedBy=multi-user.target

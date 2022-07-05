@@ -5,18 +5,17 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::template::Template;
 
-const URL_GET_LOGIN_METHOD: &str = "https://{{url}}/api/lookup?os={{os}}&os_version={{version}}";
-const URL_REQUEST_CODE: &str =
-    "https://{{url}}/api/login/code/send?os={{os}}&os_version={{version}}";
-const URL_VERIFY_CODE: &str =
-    "https://{{url}}/api/login/code/verify?os={{os}}&os_version={{version}}";
-const URL_LOGIN_PASSWORD: &str = "https://{{url}}/api/login?os={{os}}&os_version={{version}}";
-const URL_LIST_VPN: &str = "https://{{url}}/api/vpn/list?os={{os}}&os_version={{version}}";
+pub const URL_GET_COMPANY: &str = "https://corplink.volcengine.cn/api/match";
 
-const URL_PING_VPN_HOST: &str = "https://{{ip}}:{{port}}/vpn/ping?os={{os}}&os_version={{version}}";
-const URL_FETCH_PEER_INFO: &str =
-    "https://{{ip}}:{{port}}/vpn/conn?os={{os}}&os_version={{version}}";
-const URL_OPERATE_VPN: &str = "https://{{ip}}:{{port}}/vpn/report?os={{os}}&os_version={{version}}";
+const URL_GET_LOGIN_METHOD: &str = "{{url}}/api/lookup?os={{os}}&os_version={{version}}";
+const URL_REQUEST_CODE: &str = "{{url}}/api/login/code/send?os={{os}}&os_version={{version}}";
+const URL_VERIFY_CODE: &str = "{{url}}/api/login/code/verify?os={{os}}&os_version={{version}}";
+const URL_LOGIN_PASSWORD: &str = "{{url}}/api/login?os={{os}}&os_version={{version}}";
+const URL_LIST_VPN: &str = "{{url}}/api/vpn/list?os={{os}}&os_version={{version}}";
+
+const URL_PING_VPN_HOST: &str = "{{url}}/vpn/ping?os={{os}}&os_version={{version}}";
+const URL_FETCH_PEER_INFO: &str = "{{url}}/vpn/conn?os={{os}}&os_version={{version}}";
+const URL_OPERATE_VPN: &str = "{{url}}/vpn/report?os={{os}}&os_version={{version}}";
 
 #[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum ApiName {
@@ -41,8 +40,7 @@ struct UserUrlParam {
 
 #[derive(Clone, Serialize)]
 pub struct VpnUrlParam {
-    pub ip: String,
-    pub port: u16,
+    pub url: String,
     os: String,
     version: String,
 }
@@ -72,13 +70,12 @@ impl ApiUrl {
 
         let api_url = ApiUrl {
             user_param: UserUrlParam {
-                url: conf.server.clone(),
+                url: conf.server.clone().unwrap(),
                 os: os.clone(),
                 version: version.clone(),
             },
             vpn_param: VpnUrlParam {
-                ip: "".to_string(),
-                port: 0,
+                url: "".to_string(),
                 os,
                 version,
             },

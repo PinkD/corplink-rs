@@ -1,8 +1,7 @@
 {
+    "company_name": "company code name",
     "username": "your_name",
     "password": "your_pass",
-    "device_name": "device",
-    "server": "server.com:443",
     // will generate corplink.conf
     "conf_name": "corplink",
     // will generate conf in /etc/wireguard

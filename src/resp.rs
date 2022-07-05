@@ -13,6 +13,18 @@ pub struct Resp<T> {
 }
 
 #[derive(serde::Deserialize)]
+pub struct RespCompany {
+    pub name: String,
+    pub zh_name: String,
+    pub en_name: String,
+    pub domain: String,
+    pub enable_self_signed: bool,
+    pub self_signed_cert: String,
+    pub enable_public_key: bool,
+    pub public_key: String,
+}
+
+#[derive(serde::Deserialize)]
 pub struct RespLoginMethod {
     pub mfa: bool,
     pub auth: Vec<String>,
@@ -28,11 +40,12 @@ pub struct RespVpnInfo {
     pub api_port: u16,
     pub vpn_port: u16,
     pub ip: String,
+    // 1 for tcp, 2 for udp, we only support udp for now
+    pub protocol_mode: i32,
     // useless
     pub name: String,
     pub en_name: String,
     pub icon: String,
-    pub protocol_mode: i32,
     pub id: i32,
     pub timeout: i32,
 }

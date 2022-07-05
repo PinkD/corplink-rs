@@ -39,6 +39,7 @@ pub fn totp_offset(key: &[u8], slot_offset: i32) -> TotpSlot {
     TotpSlot { code, secs_left }
 }
 
+#[allow(dead_code)]
 pub fn totp(key: &[u8]) -> u32 {
     let now = time::SystemTime::now()
         .duration_since(time::UNIX_EPOCH)
