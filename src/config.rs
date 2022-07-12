@@ -8,8 +8,7 @@ use crate::state::State;
 use crate::utils;
 
 const DEFAULT_DEVICE_NAME: &str = "DollarOS";
-const DEFAULT_CONF_DIR: &str = ".";
-const DEFAULT_CONF_NAME: &str = "corplink";
+const DEFAULT_INTERFACE_NAME: &str = "corplink";
 pub const PLATFORM_LDAP: &str = "ldap";
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -24,8 +23,7 @@ pub struct Config {
     pub public_key: Option<String>,
     pub private_key: Option<String>,
     pub server: Option<String>,
-    pub conf_name: Option<String>,
-    pub conf_dir: Option<String>,
+    pub interface_name: Option<String>,
     #[serde(skip_serializing)]
     pub conf_file: Option<String>,
     pub state: Option<State>,
@@ -49,12 +47,8 @@ impl Config {
 
         conf.conf_file = Some(file.to_string());
         let mut update_conf = false;
-        if conf.conf_dir == None {
-            conf.conf_dir = Some(DEFAULT_CONF_DIR.to_string());
-            update_conf = true;
-        }
-        if conf.conf_name == None {
-            conf.conf_name = Some(DEFAULT_CONF_NAME.to_string());
+        if conf.interface_name == None {
+            conf.interface_name = Some(DEFAULT_INTERFACE_NAME.to_string());
             update_conf = true;
         }
         if conf.device_name == None {
@@ -94,14 +88,15 @@ impl Config {
     }
 
     pub async fn save(&self) {
-        fs::write(&self.conf_file.as_ref().unwrap(), format!("{}", &self))
-            .await
-            .unwrap();
+        let file = self.conf_file.as_ref().unwrap();
+        let data = format!("{}", &self);
+        fs::write(file, data).await.unwrap();
     }
 }
 
 #[derive(Serialize, Clone)]
 pub struct WgConf {
+    // standard wg conf
     pub address: String,
     pub mask: u32,
     pub peer_address: String,
@@ -109,19 +104,12 @@ pub struct WgConf {
     pub public_key: String,
     pub private_key: String,
     pub peer_key: String,
-    // ", ".join(Vec<String>)
-    pub route: String,
+    pub route: Vec<String>,
+
+    // extent confs
+    pub dns: String,
+
+    // corplink confs
+    pub protocol_version: String,
+    pub protocol: i32,
 }
-
-pub const WG_CONF_TEMPLATE: &str = "[Interface]
-Address = {{address}}/{{mask}}
-# PublicKey = {{public_key}}
-PrivateKey = {{private_key}}
-MTU = {{mtu}}
-
-[Peer]
-PublicKey = {{peer_key}}
-AllowedIPs = {{route}}
-Endpoint = {{peer_address}}
-PersistentKeepalive = 10
-";

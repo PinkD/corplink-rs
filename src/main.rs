@@ -8,7 +8,7 @@ mod totp;
 mod utils;
 mod wg;
 
-use std::{env, path::Path, process::exit};
+use std::{env, process::exit};
 
 use client::Client;
 use config::{Config, WgConf};
@@ -44,15 +44,21 @@ fn parse_arg() -> String {
     return conf_file;
 }
 
+pub const EPERM: i32 = 1;
+pub const ENOENT: i32 = 2;
 pub const ETIMEDOUT: i32 = 110;
 
 #[tokio::main]
 async fn main() {
     print_version();
+    if !wg::check_wg_go_exist().await {
+        println!("please download {} from the repo release page", wg::CMD_WG);
+        exit(ENOENT)
+    }
+
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
-    let name = conf.conf_name.clone().unwrap();
-    let conf_dir = conf.conf_dir.clone().unwrap();
+    let name = conf.interface_name.clone().unwrap();
     match conf.server {
         Some(_) => {}
         None => match client::get_company_url(conf.company_name.as_str()).await {
@@ -69,7 +75,7 @@ async fn main() {
                     "failed to fetch company server from company name {}: {}",
                     conf.company_name, err
                 );
-                exit(1);
+                exit(EPERM);
             }
         },
     }
@@ -102,26 +108,30 @@ async fn main() {
             }
         };
     }
+    println!("start {} for {}", wg::CMD_WG, &name);
     let wg_conf = wg_conf.unwrap();
-    let mut started = false;
+    let protocol_version = wg_conf.protocol_version.clone();
+    let protocol = wg_conf.protocol;
+    let mut process = match wg::start_wg_go(&name, protocol, &protocol_version).await {
+        Ok(p) => p,
+        Err(err) => {
+            println!("failed to start wg: {}", err);
+            exit(EPERM);
+        }
+    };
+    let mut uapi = wg::UAPIClient { name: name.clone() };
+    match uapi.config_wg(&wg_conf).await {
+        Ok(_) => {}
+        Err(err) => {
+            println!("failed to config interface with uapi for {}: {}", name, err);
+            exit(EPERM);
+        }
+    }
+
     let mut exit_code = 0;
     tokio::select! {
-        // start service and handle signal
+        // handle signal
         _ = async {
-            let conf_path = Path::new(&conf_dir).join(format!("{}.conf", name));
-            println!("generating config to {}", &conf_path.to_str().unwrap());
-            match wg::gen_wg_conf(&conf_path, &wg_conf).await {
-                Ok(_) => {},
-                Err(e) => {
-                    println!("failed to generate wg conf: {}",e);
-                    return;
-                },
-            }
-            // no error because user can start it manually
-            println!("start {}", utils::service_name(&name));
-            wg::start_wg_quick(&name).await;
-            started = true;
-
             match tokio::signal::ctrl_c().await {
                 Ok(_) => {},
                 Err(e) => {
@@ -138,7 +148,7 @@ async fn main() {
 
         // check wg handshake and exit if timeout
         _ = async {
-            wg::check_wg_connection(&name).await;
+            uapi.check_wg_connection().await;
             println!("last handshake timeout");
         } => {
             exit_code = ETIMEDOUT;
@@ -151,12 +161,17 @@ async fn main() {
         Ok(_) => {}
         Err(e) => println!("failed to disconnect vpn: {}", e),
     };
-    if started {
-        println!("stopping service...");
-        wg::stop_wg_quick(&name).await;
-        println!("stopped")
+
+    println!("killing {}...", wg::CMD_WG);
+    match process.kill().await {
+        Ok(_) => {
+            println!("{} killed", wg::CMD_WG);
+        }
+        Err(err) => {
+            println!("failed to kill {}: {}", wg::CMD_WG, err);
+        }
     }
-    println!("exited");
+    println!("reach exit");
     exit(exit_code)
 }
 

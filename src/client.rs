@@ -467,12 +467,10 @@ impl Client {
         let peer_key = wg_info.public_key;
         let public_key = self.conf.public_key.clone().unwrap();
         let private_key = self.conf.private_key.clone().unwrap();
-        let mut route = wg_info.setting.vpn_route_split;
-        // remove dns because it's useless
-        if route.len() != 0 && route[0].starts_with(&dns) {
-            route.remove(0);
-        }
-        let route = route.join(", ");
+        let route = wg_info.setting.vpn_route_split;
+        
+        // corplink config
+        let protocol_version = wg_info.protocol_version;
         let wg_conf = WgConf {
             address: wg_info.ip,
             mask: wg_info.ip_mask.parse::<u32>().unwrap(),
@@ -482,6 +480,9 @@ impl Client {
             private_key,
             peer_key,
             route,
+            dns,
+            protocol_version,
+            protocol: 0,
         };
         Ok(wg_conf)
     }
@@ -489,7 +490,7 @@ impl Client {
     pub async fn keep_alive_vpn(&mut self, conf: &WgConf, interval: u64) {
         loop {
             println!("keep alive");
-            match self.keep_alive_vpn_internal(&conf).await {
+            match self.report_vpn_status(&conf).await {
                 Ok(_) => (),
                 Err(err) => {
                     println!("keep alive error: {}", err);
@@ -500,7 +501,7 @@ impl Client {
         }
     }
 
-    async fn keep_alive_vpn_internal(&mut self, conf: &WgConf) -> Result<(), Error> {
+    pub async fn report_vpn_status(&mut self, conf: &WgConf) -> Result<(), Error> {
         let mut m = Map::new();
         m.insert("ip".to_string(), json!(conf.address));
         m.insert("public_key".to_string(), json!(conf.public_key));
@@ -513,7 +514,7 @@ impl Client {
         match resp.code {
             0 => Ok(()),
             _ => Err(Error::Error(format!(
-                "failed to fetch peer info with error {}: {}",
+                "failed to report connection with error {}: {}",
                 resp.code,
                 resp.message.unwrap()
             ))),

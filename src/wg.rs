@@ -1,18 +1,21 @@
-use std::io::{Error, ErrorKind};
-use std::path::Path;
+use std::collections::HashMap;
+use std::io::{self, ErrorKind};
 use std::process::Stdio;
 use std::time;
 
 use chrono;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ClientOptions;
 use tokio::process::Command;
 
-use crate::template::Template;
 use crate::{config, utils};
 
-const CMD_SYSTEMCTL: &str = "systemctl";
-const CMD_WG: &str = "wg";
+pub const CMD_WG: &str = "wg-corplink";
+pub const ENV_KEY_PROTOCOL_VERSION: &str = "CORPLINK_PROTOCOL_VERSION";
+pub const ENV_KEY_NETWORK_TYPE: &str = "CORPLINK_NETWORK_TYPE";
 
-async fn cmd_exist(cmd: &str) -> bool {
+pub async fn cmd_exist(cmd: &str) -> bool {
     match Command::new(cmd)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -36,133 +39,223 @@ async fn cmd_exist(cmd: &str) -> bool {
     }
 }
 
-pub async fn gen_wg_conf(file: impl AsRef<Path>, conf: &config::WgConf) -> Result<(), Error> {
-    let tmpl: Template = Template::new(config::WG_CONF_TEMPLATE);
-    let conf = tmpl.render((*conf).clone());
-    tokio::fs::write(file, conf).await
+pub async fn check_wg_go_exist() -> bool {
+    return cmd_exist(CMD_WG).await;
 }
 
-pub async fn start_wg_quick(name: &String) {
-    let service = utils::service_name(name);
-    if !cmd_exist(CMD_SYSTEMCTL).await {
-        println!(
-            "skip start {} becuase {} not found, you may need to start wireguard by your self",
-            service, CMD_SYSTEMCTL
-        )
-    }
-    let mut process = Command::new(CMD_SYSTEMCTL)
-        .args(["start", service.as_str()])
+pub async fn start_wg_go(
+    name: &String,
+    protocol: i32,
+    protocol_version: &String,
+) -> io::Result<tokio::process::Child> {
+    let mut envs = HashMap::new();
+
+    match protocol_version.as_str() {
+        "v2" => {
+            envs.insert(ENV_KEY_PROTOCOL_VERSION, "v2");
+        }
+        _ => {}
+    };
+    match protocol {
+        // TODO: replace with real protocol and support tcp tun
+        0xff => {
+            envs.insert(ENV_KEY_NETWORK_TYPE, "tcp");
+        }
+        _ => {}
+    };
+    println!("launch {CMD_WG} with env: {envs:?}");
+    return Command::new(CMD_WG)
+        .args(["-f", name.as_str()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    match process.wait().await {
-        Ok(code) => {
-            if code.success() {
-                println!("{} started", service)
-            } else {
-                println!("start {} fail: {}", service, code)
-            }
-        }
-        Err(err) => {
-            println!("start {} fail: {}", service, err)
-        }
-    }
+        .envs(envs)
+        .spawn();
 }
 
-pub async fn stop_wg_quick(name: &String) {
-    if !cmd_exist(CMD_SYSTEMCTL).await {
-        return;
-    }
-    let service = utils::service_name(name);
-    let mut process = tokio::process::Command::new("systemctl")
-        .args(["stop", service.as_str()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    match process.wait().await {
-        Ok(code) => {
-            if code.success() {
-                println!("{} stopped", service)
-            } else {
-                println!("stop {} fail: {}", service, code)
-            }
-        }
-        Err(err) => {
-            println!("stop {} fail: {}", service, err)
-        }
+const SOCKET_DIRECTORY_UNIX: &str = "/var/run/wireguard";
+#[cfg(windows)]
+const SOCKET_DIRECTORY_WINDOWS: &str = r"\\.\pipe\ProtectedPrefix\Administrators\WireGuard\";
+
+cfg_if::cfg_if! {
+    if #[cfg(windows)] {
+        type Conn = tokio::net::windows::named_pipe::NamedPipeClient;
+    } else {
+        type Conn = tokio::net::UnixStream;
     }
 }
+pub struct UAPIClient {
+    pub name: String,
+}
 
-pub async fn check_wg_connection(name: &String) {
-    // default refresh key timeout of wg is 2 min
-    // we set wg connection timeout to 5 min
-    let interval = time::Duration::from_secs(5 * 60);
-    let mut ticker = tokio::time::interval(interval);
-    let mut timeout = false;
-    if !cmd_exist(CMD_WG).await {
-        println!(
-            "skip check handshake timeout becuase command {} not found",
-            CMD_WG
-        );
-        loop {
-            // tick forever because we cannot check handshake
-            ticker.tick().await;
-        }
-    }
-    // consume the first tick
-    ticker.tick().await;
-    while !timeout {
-        ticker.tick().await;
-        match tokio::process::Command::new(CMD_WG)
-            .args(["show", name.as_str(), "latest-handshakes"])
-            .output()
-            .await
-        {
-            Ok(output) => {
-                let byte_to_str =
-                    |v: Vec<u8>| String::from(std::str::from_utf8(v.as_slice()).unwrap());
-                if output.status.success() {
-                    let stdout = byte_to_str(output.stdout);
-
-                    let s = stdout.split_whitespace();
-                    match s.last().unwrap().parse::<i64>() {
-                        Ok(timestamp) => {
-                            let nt = chrono::NaiveDateTime::from_timestamp(timestamp, 0);
-                            let now = chrono::Utc::now().naive_utc();
-                            let t = now - nt;
-                            let tt: chrono::DateTime<chrono::Utc> =
-                                chrono::DateTime::from_utc(nt, chrono::Utc);
-                            let lt = tt.with_timezone(&chrono::Local);
-                            let elapsed = t.to_std().unwrap().as_secs_f32();
-                            println!("last handshake is at {}, elapsed time {}s", lt, elapsed);
-                            if t > chrono::Duration::from_std(interval).unwrap() {
-                                println!(
-                                    "last handshake is at {}, elapsed time {}s more than {}s",
-                                    lt,
-                                    elapsed,
-                                    interval.as_secs()
-                                );
-                                timeout = true;
-                            }
-                        }
-                        Err(err) => {
-                            println!("parse last handshake of {} fail: {}", name, err)
-                        }
+impl UAPIClient {
+    pub async fn connect_uapi(&mut self) -> io::Result<Conn> {
+        cfg_if::cfg_if! {
+            if #[cfg(windows)] {
+                let path = format!("{}\\{}", SOCKET_DIRECTORY_WINDOWS, self.name);
+                wait_path_exist(&path).await;
+                let conn = ClientOptions::new().open(path)?;
+                // TODO: wait socket ready
+            } else {
+                let path = format!("{}/{}.sock", SOCKET_DIRECTORY_UNIX, self.name);
+                wait_path_exist(&path).await;
+                let conn = tokio::net::UnixStream::connect(path).await?;
+                loop {
+                    let ready = conn.ready(tokio::io::Interest::WRITABLE).await?;
+                    if ready.is_writable() {
+                        break;
+                    } else {
+                        println!("uapi not ready, sleep 1s");
+                        tokio::time::sleep(time::Duration::from_secs(1)).await;
                     }
-                } else {
-                    println!(
-                        "get last handshake of {} fail, stdout: {}, stderr: {}",
-                        name,
-                        byte_to_str(output.stdout),
-                        byte_to_str(output.stderr)
-                    )
                 }
             }
+        }
+        Ok(conn)
+    }
+
+    pub async fn config_wg(&mut self, conf: &config::WgConf) -> io::Result<()> {
+        let mut conn = self.connect_uapi().await?;
+        let mut buff = String::from("set=1\n");
+        // standard wg-go uapi operations
+        // see https://www.wireguard.com/xplatform/#configuration-protocol
+        let private_key = utils::b64_decode_to_hex(&conf.private_key);
+        let public_key = utils::b64_decode_to_hex(&conf.peer_key);
+        buff.push_str(format!("private_key={private_key}\n").as_str());
+        buff.push_str(format!("replace_peers=true\n").as_str());
+        buff.push_str(format!("public_key={public_key}\n").as_str());
+        buff.push_str(format!("replace_allowed_ips=true\n").as_str());
+        buff.push_str(format!("endpoint={}\n", conf.peer_address).as_str());
+        buff.push_str(format!("persistent_keepalive_interval=10\n").as_str());
+        for route in &conf.route {
+            buff.push_str(format!("allowed_ip={route}\n").as_str());
+        }
+
+        // wg-corplink uapi operations
+        let addr = format!("{}/{}", conf.address, conf.mask);
+        let mtu = conf.mtu;
+        buff.push_str(format!("address={addr}\n").as_str());
+        buff.push_str(format!("mtu={mtu}\n").as_str());
+        buff.push_str(format!("up=true\n").as_str());
+        for route in &conf.route {
+            buff.push_str(format!("route={route}\n").as_str());
+        }
+        // end operation
+        buff.push_str("\n");
+        let data = buff.as_bytes();
+
+        println!("send to config to uapi");
+        match conn.write(data).await {
+            Ok(_) => {}
             Err(err) => {
-                println!("get last handshake of {} fail: {}", name, err)
+                return Err(err);
             }
-        };
+        }
+        conn.flush().await?;
+        let mut s = String::new();
+        let mut reader = BufReader::new(conn);
+        match reader.read_line(&mut s).await {
+            Ok(_) => {}
+            Err(err) => {
+                return Err(err);
+            }
+        }
+        if !s.contains("errno=0") {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!("uapi returns unexpected result: {}", s),
+            ));
+        }
+        Ok(())
+    }
+
+    pub async fn check_wg_connection(&mut self) {
+        // default refresh key timeout of wg is 2 min
+        // we set wg connection timeout to 5 min
+        let interval = time::Duration::from_secs(5 * 60);
+        let mut ticker = tokio::time::interval(interval);
+        let mut timeout = false;
+        // consume the first tick
+        ticker.tick().await;
+        while !timeout {
+            ticker.tick().await;
+
+            let mut conn = match self.connect_uapi().await {
+                Ok(conn) => conn,
+                Err(err) => {
+                    println!("failed to connect uapi: {}", err);
+                    return;
+                }
+            };
+            let name = self.name.as_str();
+            match conn.write(b"get=1\n\n").await {
+                Ok(_) => {}
+                Err(err) => {
+                    println!("get last handshake of {} fail: {}", name, err)
+                }
+            }
+            let mut line = String::new();
+            let mut reader = BufReader::new(conn);
+            loop {
+                match reader.read_line(&mut line).await {
+                    Ok(_) => {
+                        if line.starts_with("last_handshake_time_sec") {
+                            match line.trim_end().split("=").last().unwrap().parse::<i64>() {
+                                Ok(timestamp) => {
+                                    if timestamp == 0 {
+                                        // do nothing because it's invalid
+                                    } else {
+                                        let nt =
+                                            chrono::NaiveDateTime::from_timestamp(timestamp, 0);
+                                        let now = chrono::Utc::now().naive_utc();
+                                        let t = now - nt;
+                                        let tt: chrono::DateTime<chrono::Utc> =
+                                            chrono::DateTime::from_utc(nt, chrono::Utc);
+                                        let lt = tt.with_timezone(&chrono::Local);
+                                        let elapsed = t.to_std().unwrap().as_secs_f32();
+                                        println!(
+                                            "last handshake is at {lt}, elapsed time {elapsed}s"
+                                        );
+                                        if t > chrono::Duration::from_std(interval).unwrap() {
+                                            println!(
+                                                "last handshake is at {}, elapsed time {}s more than {}s",
+                                                lt,
+                                                elapsed,
+                                                interval.as_secs()
+                                            );
+                                            timeout = true;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    println!("parse last handshake of {} fail: {}", name, err)
+                                }
+                            }
+                            break;
+                        } else if line == "\n" {
+                            // reach end
+                            break;
+                        }
+                        // clear line cache for next read
+                        line.clear();
+                    }
+                    Err(err) => {
+                        println!("get last handshake of {} fail: {}", name, err);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn wait_path_exist(file: &str) {
+    let mut count = 10;
+    while count > 0 {
+        if std::path::Path::new(file).exists() {
+            return;
+        }
+        println!("socket file {file} not ready, sleep 1s");
+        tokio::time::sleep(time::Duration::from_secs(1)).await;
+        count -= 1;
     }
 }

@@ -13,10 +13,6 @@ pub fn b32_decode(s: &str) -> Vec<u8> {
     return base32::decode(Alphabet::RFC4648 { padding: true }, s).unwrap();
 }
 
-pub fn service_name(name: &String) -> String {
-    format!("wg-quick@{}.service", name)
-}
-
 pub fn gen_wg_keypair() -> (String, String) {
     let csprng = OsRng {};
     let sk = StaticSecret::new(csprng);
@@ -34,4 +30,13 @@ pub fn gen_public_key_from_private(private_key: &String) -> Result<String, Box<d
         }
         Err(e) => Err(format!("failed to base64 decode {}: {}", private_key, e).into()),
     }
+}
+
+pub fn b64_decode_to_hex(s: &str) -> String {
+    let data = base64::decode(s).unwrap();
+    let mut hex = String::new();
+    for c in data {
+        hex.push_str(format!("{c:02x}").as_str());
+    }
+    return hex;
 }

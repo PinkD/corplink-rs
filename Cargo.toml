@@ -1,6 +1,6 @@
 [package]
 name = "corplink-rs"
-version = "0.1.4"
+version = "0.2.1"
 edition = "2021"
 
 [dependencies]
@@ -8,7 +8,7 @@ regex = "1"
 reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies"] }
 # for debug
 # reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies", "socks"] }
-tokio = { version = "1.13.0", features = ["full"] }
+tokio = { version = "1.19.2", features = ["full", "net"] }
 futures = "0.3"
 serde_json = "1.0"
 serde = "1.0"
@@ -24,6 +24,7 @@ rand = "0.7"
 x25519-dalek = "1"
 httpdate = "1.0"
 chrono = "0.4.19"
+cfg-if = "1.0.0"
 
 # string_template = "0.2"
 # dependency for basic-otp
