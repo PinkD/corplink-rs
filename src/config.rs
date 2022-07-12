@@ -9,6 +9,7 @@ use crate::utils;
 
 const DEFAULT_DEVICE_NAME: &str = "DollarOS";
 const DEFAULT_INTERFACE_NAME: &str = "corplink";
+pub const DEFAULT_CMD_WG_NAME: &str = "wg-corplink";
 pub const PLATFORM_LDAP: &str = "ldap";
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -24,6 +25,7 @@ pub struct Config {
     pub private_key: Option<String>,
     pub server: Option<String>,
     pub interface_name: Option<String>,
+    pub wg_binary: Option<String>,
     #[serde(skip_serializing)]
     pub conf_file: Option<String>,
     pub state: Option<State>,
@@ -50,6 +52,9 @@ impl Config {
         if conf.interface_name == None {
             conf.interface_name = Some(DEFAULT_INTERFACE_NAME.to_string());
             update_conf = true;
+        }
+        if conf.wg_binary != None {
+            println!("using wg binary {}", conf.wg_binary.clone().unwrap());
         }
         if conf.device_name == None {
             conf.device_name = Some(DEFAULT_DEVICE_NAME.to_string());

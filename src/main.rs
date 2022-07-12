@@ -51,13 +51,19 @@ pub const ETIMEDOUT: i32 = 110;
 #[tokio::main]
 async fn main() {
     print_version();
-    if !wg::check_wg_go_exist().await {
-        println!("please download {} from the repo release page", wg::CMD_WG);
-        exit(ENOENT)
-    }
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
+    
+    let cmd = match conf.wg_binary.clone() {
+        Some(cmd) => cmd,
+        None => config::DEFAULT_CMD_WG_NAME.to_string(),
+    };
+    if !wg::cmd_exist(cmd.as_str()).await {
+        println!("please download {} from the repo release page", cmd);
+        exit(ENOENT)
+    }
+
     let name = conf.interface_name.clone().unwrap();
     match conf.server {
         Some(_) => {}
@@ -108,11 +114,11 @@ async fn main() {
             }
         };
     }
-    println!("start {} for {}", wg::CMD_WG, &name);
+    println!("start {} for {}", cmd, &name);
     let wg_conf = wg_conf.unwrap();
     let protocol_version = wg_conf.protocol_version.clone();
     let protocol = wg_conf.protocol;
-    let mut process = match wg::start_wg_go(&name, protocol, &protocol_version).await {
+    let mut process = match wg::start_wg_go(&cmd, &name, protocol, &protocol_version).await {
         Ok(p) => p,
         Err(err) => {
             println!("failed to start wg: {}", err);
@@ -162,13 +168,13 @@ async fn main() {
         Err(e) => println!("failed to disconnect vpn: {}", e),
     };
 
-    println!("killing {}...", wg::CMD_WG);
+    println!("killing {}...", cmd);
     match process.kill().await {
         Ok(_) => {
-            println!("{} killed", wg::CMD_WG);
+            println!("{} killed", cmd);
         }
         Err(err) => {
-            println!("failed to kill {}: {}", wg::CMD_WG, err);
+            println!("failed to kill {}: {}", cmd, err);
         }
     }
     println!("reach exit");

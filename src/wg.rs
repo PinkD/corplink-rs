@@ -11,7 +11,6 @@ use tokio::process::Command;
 
 use crate::{config, utils};
 
-pub const CMD_WG: &str = "wg-corplink";
 pub const ENV_KEY_PROTOCOL_VERSION: &str = "CORPLINK_PROTOCOL_VERSION";
 pub const ENV_KEY_NETWORK_TYPE: &str = "CORPLINK_NETWORK_TYPE";
 
@@ -39,11 +38,8 @@ pub async fn cmd_exist(cmd: &str) -> bool {
     }
 }
 
-pub async fn check_wg_go_exist() -> bool {
-    return cmd_exist(CMD_WG).await;
-}
-
 pub async fn start_wg_go(
+    cmd: &String,
     name: &String,
     protocol: i32,
     protocol_version: &String,
@@ -63,8 +59,8 @@ pub async fn start_wg_go(
         }
         _ => {}
     };
-    println!("launch {CMD_WG} with env: {envs:?}");
-    return Command::new(CMD_WG)
+    println!("launch {cmd} with env: {envs:?}");
+    return Command::new(cmd.as_str())
         .args(["-f", name.as_str()])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -143,7 +139,7 @@ impl UAPIClient {
         buff.push_str("\n");
         let data = buff.as_bytes();
 
-        println!("send to config to uapi");
+        println!("send config to uapi");
         match conn.write(data).await {
             Ok(_) => {}
             Err(err) => {

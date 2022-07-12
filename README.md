@@ -37,9 +37,7 @@ systemctl start corplink-rs@test.service
   "company_name": "company code name",
   "username": "your_name",
   "password": "your_pass",
-  "platform": "ldap",
-  "conf_name": "corplink",
-  "conf_dir": "/etc/wireguard"
+  "platform": "ldap"
 }
 ```
 
@@ -60,10 +58,10 @@ systemctl start corplink-rs@test.service
   "public_key": "wg public key, can be generated from private key",
   "private_key": "wg private key",
   "server": "server link",
-  // will generate corplink.conf for wg
-  "conf_name": "corplink",
-  // will generate conf in /etc/wireguard, default is current dir
-  "conf_dir": "/etc/wireguard"
+  // will use corplink as interface name
+  "interface_name": "corplink",
+  // will use wg-corplink as wireguard-go
+  "wg_binary": "wg-corplink"
 }
 ```
 
@@ -83,6 +81,10 @@ systemctl start corplink-rs@test.service
 - ...
 
 因此，我们只需要生成 wg 的 key ，然后去找服务端拿配置，然后写到 wg 配置里，启动 wg ，就能连上服务端了
+
+### 后续改动
+
+2.0.9 版本(或者更早)新增了 `protocol_version` 字段，需要使用魔改后的 [wg-corplink][5] 才能连接
 
 ## 请求流程
 
@@ -124,12 +126,18 @@ graph TD;
 
 # TODO
 
+- [ ] windows/mac 实现
+- [ ] 为不同配置生成不同的 `cookie.json`
 - [x] 自动使用从服务器返回的请求中的时间戳同步时间
 - [x] 自动生成 wg key
 - [x] 修复服务端异常断开连接后客户端不会退出的问题
 
 # Changelog
 
+- 0.2.1
+  - use modified wireguard-go
+    - don't generate config anymore
+  - remove `conf_name/conf_dir` and add `interface_name/wg_binary` in config
 - 0.1.4
   - get company name from company code automatically
   - support ldap
@@ -149,6 +157,7 @@ graph TD;
 - [wg-go][2]
 - [totp][3]
 - [python 版本][4]
+- [wg-corplink][5]
 
 # License
 
@@ -175,3 +184,4 @@ graph TD;
 [2]: https://github.com/WireGuard/wireguard-go
 [3]: https://en.wikipedia.org/wiki/Time-based_one-time_password
 [4]: https://github.com/PinkD/corplink
+[5]: https://github.com/PinkD/wireguard-go
