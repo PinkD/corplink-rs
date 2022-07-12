@@ -2,13 +2,13 @@
 
 pkgname=corplink-rs
 _pkgbase=corplink-rs
-pkgver=1.4
+pkgver=2.1
 pkgrel=1
 pkgdesc='Corplink client written in Rust'
 arch=('i686' 'x86_64')
 url='https://github.com/PinkD/corplink-rs'
 license=('GPL2')
-makedepends=('cargo')
+makedepends=('cargo' 'go')
 source=("$pkgname.tar.gz"::"https://github.com/PinkD/corplink-rs/archive/$pkgver.tar.gz")
 # use SKIP to avoid update PKGBUILD everytime
 md5sums=('SKIP')
@@ -17,6 +17,10 @@ backup=(etc/corplink/config.json)
 build() {
   cd "$srcdir/$_pkgbase-$pkgver"
   cargo build --release
+  cd ..
+  git clone https://github.com/PinkD/wireguard-go
+  cd wireguard-go
+  make
 }
 
 package() {
@@ -25,4 +29,6 @@ package() {
   install -Dm 600 "config/config.json" "$pkgdir/etc/corplink/config.json"
   install -Dm 644 "systemd/$pkgname.service" "$pkgdir/usr/lib/systemd/system/$pkgname.service"
   install -Dm 644 "systemd/$pkgname@.service" "$pkgdir/usr/lib/systemd/system/$pkgname@.service"
+  cd ../wireguard-go
+  install -Dm 755 "wireguard-go" "$pkgdir/usr/bin/wg-corplink"
 }
