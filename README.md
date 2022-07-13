@@ -2,6 +2,37 @@
 
 使用 rust 实现的 [飞连][1] 客户端
 
+# 安装
+
+## ArchLinux
+
+下载 [release](https://github.com/PinkD/corplink-rs/releases) 中的安装包，并安装
+
+```bash
+pacman -U corplink-rs-2.1-1-x86_64.pkg.tar.zst
+```
+
+> 欢迎贡献其它包管理器的打包脚本
+
+## 手动编译
+
+> 暂时只支持 Linux
+
+```bash
+git clone https://github.com/PinkD/corplink-rs --depth 1
+cd corplink-rs
+cargo build --release
+# install corplink-rs to your PATH
+mv target/release/corplink-rs /usr/bin/
+cd ..
+git clone https://github.com/PinkD/wireguard-go --depth 1
+cd wireguard-go
+make
+# install wg-corplink to your PATH
+# your can also install it to somewhere else and use wg_binary config to tell corplink-rs where it is
+mv wireguard-go /usr/bin/wg-corplink
+```
+
 # 用法
 
 ```bash
