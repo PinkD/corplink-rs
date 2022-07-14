@@ -165,6 +165,8 @@ graph TD;
 
 # Changelog
 
+- 0.2.2
+  - fix wg-corplink not exit if corplink-rs exit accidently
 - 0.2.1
   - use modified wireguard-go
     - don't generate config anymore
