@@ -8,7 +8,7 @@ regex = "1"
 reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies"] }
 # for debug
 # reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies", "socks"] }
-tokio = { version = "1.19.2", features = ["full", "net"] }
+tokio = { version = "1.19.2", features = ["full"] }
 futures = "0.3"
 serde_json = "1.0"
 serde = "1.0"

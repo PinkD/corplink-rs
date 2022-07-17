@@ -4,8 +4,6 @@ use std::process::Stdio;
 use std::time;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-#[cfg(windows)]
-use tokio::net::windows::named_pipe::ClientOptions;
 use tokio::process::Command;
 
 use crate::{config, utils};
@@ -68,16 +66,8 @@ pub async fn start_wg_go(
 }
 
 const SOCKET_DIRECTORY_UNIX: &str = "/var/run/wireguard";
-#[cfg(windows)]
-const SOCKET_DIRECTORY_WINDOWS: &str = r"\\.\pipe\ProtectedPrefix\Administrators\WireGuard\";
 
-cfg_if::cfg_if! {
-    if #[cfg(windows)] {
-        type Conn = tokio::net::windows::named_pipe::NamedPipeClient;
-    } else {
-        type Conn = tokio::net::UnixStream;
-    }
-}
+type Conn = tokio::net::UnixStream;
 pub struct UAPIClient {
     pub name: String,
 }
@@ -86,23 +76,22 @@ impl UAPIClient {
     pub async fn connect_uapi(&mut self) -> io::Result<Conn> {
         cfg_if::cfg_if! {
             if #[cfg(windows)] {
-                let path = format!("{}\\{}", SOCKET_DIRECTORY_WINDOWS, self.name);
-                wait_path_exist(&path).await;
-                let conn = ClientOptions::new().open(path)?;
-                // TODO: wait socket ready
+                let tmp_dir = std::env::temp_dir();
+                let sock_name = format!("{}.sock", self.name);
+                let sock_path = tmp_dir.join(sock_name);
             } else {
-                let path = format!("{}/{}.sock", SOCKET_DIRECTORY_UNIX, self.name);
-                wait_path_exist(&path).await;
-                let conn = tokio::net::UnixStream::connect(path).await?;
-                loop {
-                    let ready = conn.ready(tokio::io::Interest::WRITABLE).await?;
-                    if ready.is_writable() {
-                        break;
-                    } else {
-                        println!("uapi not ready, sleep 1s");
-                        tokio::time::sleep(time::Duration::from_secs(1)).await;
-                    }
-                }
+                let sock_path = format!("{}/{}.sock", SOCKET_DIRECTORY_UNIX, self.name);
+            }
+        }
+        wait_path_exist(&sock_path).await;
+        let conn = tokio::net::UnixStream::connect(sock_path).await?;
+        loop {
+            let ready = conn.ready(tokio::io::Interest::WRITABLE).await?;
+            if ready.is_writable() {
+                break;
+            } else {
+                println!("uapi not ready, sleep 1s");
+                tokio::time::sleep(time::Duration::from_secs(1)).await;
             }
         }
         Ok(conn)
