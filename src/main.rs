@@ -8,6 +8,8 @@ mod totp;
 mod utils;
 mod wg;
 
+#[cfg(windows)]
+use is_elevated;
 use std::{env, process::exit};
 
 use client::Client;
@@ -51,6 +53,8 @@ pub const ETIMEDOUT: i32 = 110;
 #[tokio::main]
 async fn main() {
     print_version();
+
+    check_previlige();
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
@@ -179,6 +183,23 @@ async fn main() {
     }
     println!("reach exit");
     exit(exit_code)
+}
+
+fn check_previlige() {
+    #[cfg(unix)]
+    match sudo::escalate_if_needed() {
+        Ok(_) => {}
+        Err(_) => {
+            println!("please run as root");
+            exit(EPERM);
+        }
+    }
+
+    #[cfg(windows)]
+    if !is_elevated::is_elevated() {
+        println!("please run as administrator");
+        exit(EPERM);
+    }
 }
 
 fn print_version() {

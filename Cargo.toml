@@ -25,6 +25,10 @@ x25519-dalek = "1"
 httpdate = "1.0"
 chrono = "0.4.19"
 cfg-if = "1.0.0"
+# linux privilege check
+sudo = "0.6.0"
+# windows privilege check
+is_elevated = "0.1.2"
 
 # string_template = "0.2"
 # dependency for basic-otp
