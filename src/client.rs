@@ -470,7 +470,7 @@ impl Client {
         let route = wg_info.setting.vpn_route_split;
         
         // corplink config
-        let protocol_version = wg_info.protocol_version;
+        let protocol_version = wg_info.protocol_version.unwrap_or("".to_string());
         let wg_conf = WgConf {
             address: wg_info.ip,
             mask: wg_info.ip_mask.parse::<u32>().unwrap(),

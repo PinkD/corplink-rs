@@ -66,7 +66,7 @@ pub struct RespWgInfo {
     pub ipv6: String,
     pub ip_mask: String,
     pub public_key: String,
-    pub protocol_version: String,
+    pub protocol_version: Option<String>,
     pub setting: RespWgExtraInfo,
     pub mode: u32,
 }
