@@ -7,6 +7,7 @@ mod template;
 mod totp;
 mod utils;
 mod wg;
+mod sock;
 
 #[cfg(windows)]
 use is_elevated;

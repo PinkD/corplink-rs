@@ -85,15 +85,6 @@ impl UAPIClient {
         }
         wait_path_exist(&sock_path).await;
         let conn = tokio::net::UnixStream::connect(sock_path).await?;
-        loop {
-            let ready = conn.ready(tokio::io::Interest::WRITABLE).await?;
-            if ready.is_writable() {
-                break;
-            } else {
-                println!("uapi not ready, sleep 1s");
-                tokio::time::sleep(time::Duration::from_secs(1)).await;
-            }
-        }
         Ok(conn)
     }
 
