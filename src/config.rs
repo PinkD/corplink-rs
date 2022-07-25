@@ -2,7 +2,6 @@ use std::fmt;
 use tokio::fs;
 
 use serde::{Deserialize, Serialize};
-use serde_json;
 
 use crate::state::State;
 use crate::utils;
@@ -89,7 +88,7 @@ impl Config {
         if update_conf {
             conf.save().await;
         }
-        return conf;
+        conf
     }
 
     pub async fn save(&self) {

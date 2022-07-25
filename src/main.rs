@@ -22,12 +22,12 @@ fn parse_arg() -> String {
     let mut conf_file = String::from("config.json");
     let mut args = env::args();
     // pop name
-    let name = args.nth(0).unwrap();
+    let name = args.next().unwrap();
     match args.len() {
         0 => {}
         1 => {
             // pop arg
-            let arg = args.nth(0).unwrap();
+            let arg = args.next().unwrap();
             match arg.as_str() {
                 "-h" | "--help" => {
                     print_usage_and_exit(&name, &conf_file);
@@ -41,7 +41,7 @@ fn parse_arg() -> String {
             print_usage_and_exit(&name, &conf_file);
         }
     }
-    return conf_file;
+    conf_file
 }
 
 pub const EPERM: i32 = 1;
@@ -54,7 +54,7 @@ async fn main() {
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
-    
+
     let cmd = match conf.wg_binary.clone() {
         Some(cmd) => cmd,
         None => config::DEFAULT_CMD_WG_NAME.to_string(),

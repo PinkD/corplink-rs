@@ -3,7 +3,6 @@ use std::io::{self, ErrorKind};
 use std::process::Stdio;
 use std::time;
 
-use chrono;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ClientOptions;
@@ -39,29 +38,25 @@ pub async fn cmd_exist(cmd: &str) -> bool {
 }
 
 pub async fn start_wg_go(
-    cmd: &String,
-    name: &String,
+    cmd: &str,
+    name: &str,
     protocol: i32,
-    protocol_version: &String,
+    protocol_version: &str,
 ) -> io::Result<tokio::process::Child> {
     let mut envs = HashMap::new();
 
-    match protocol_version.as_str() {
-        "v2" => {
-            envs.insert(ENV_KEY_PROTOCOL_VERSION, "v2");
-        }
-        _ => {}
-    };
-    match protocol {
-        // TODO: replace with real protocol and support tcp tun
-        0xff => {
-            envs.insert(ENV_KEY_NETWORK_TYPE, "tcp");
-        }
-        _ => {}
-    };
+    if protocol_version == "v2" {
+        envs.insert(ENV_KEY_PROTOCOL_VERSION, "v2");
+    }
+
+    // TODO: replace with real protocol and support tcp tun
+    if protocol == 0xff {
+        envs.insert(ENV_KEY_NETWORK_TYPE, "tcp");
+    }
+
     println!("launch {cmd} with env: {envs:?}");
-    return Command::new(cmd.as_str())
-        .args(["-f", name.as_str()])
+    return Command::new(cmd)
+        .args(["-f", name])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .envs(envs)
@@ -117,11 +112,11 @@ impl UAPIClient {
         let private_key = utils::b64_decode_to_hex(&conf.private_key);
         let public_key = utils::b64_decode_to_hex(&conf.peer_key);
         buff.push_str(format!("private_key={private_key}\n").as_str());
-        buff.push_str(format!("replace_peers=true\n").as_str());
+        buff.push_str("replace_peers=true\n".to_string().as_str());
         buff.push_str(format!("public_key={public_key}\n").as_str());
-        buff.push_str(format!("replace_allowed_ips=true\n").as_str());
+        buff.push_str("replace_allowed_ips=true\n".to_string().as_str());
         buff.push_str(format!("endpoint={}\n", conf.peer_address).as_str());
-        buff.push_str(format!("persistent_keepalive_interval=10\n").as_str());
+        buff.push_str("persistent_keepalive_interval=10\n".to_string().as_str());
         for route in &conf.route {
             buff.push_str(format!("allowed_ip={route}\n").as_str());
         }
@@ -131,12 +126,12 @@ impl UAPIClient {
         let mtu = conf.mtu;
         buff.push_str(format!("address={addr}\n").as_str());
         buff.push_str(format!("mtu={mtu}\n").as_str());
-        buff.push_str(format!("up=true\n").as_str());
+        buff.push_str("up=true\n".to_string().as_str());
         for route in &conf.route {
             buff.push_str(format!("route={route}\n").as_str());
         }
         // end operation
-        buff.push_str("\n");
+        buff.push('\n');
         let data = buff.as_bytes();
 
         println!("send config to uapi");
@@ -195,7 +190,7 @@ impl UAPIClient {
                 match reader.read_line(&mut line).await {
                     Ok(_) => {
                         if line.starts_with("last_handshake_time_sec") {
-                            match line.trim_end().split("=").last().unwrap().parse::<i64>() {
+                            match line.trim_end().split('=').last().unwrap().parse::<i64>() {
                                 Ok(timestamp) => {
                                     if timestamp == 0 {
                                         // do nothing because it's invalid

@@ -1,5 +1,3 @@
-use serde;
-
 #[derive(serde::Deserialize)]
 pub struct Resp<T> {
     pub code: i32,

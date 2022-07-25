@@ -30,11 +30,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Error::ReqwestError(err) => {
-                return err.fmt(f);
-            }
+            Error::ReqwestError(err) => err.fmt(f),
             Error::Error(err) => {
-                return write!(f, "{}", err);
+                write!(f, "{}", err)
             }
         }
     }
@@ -108,13 +106,13 @@ impl Client {
         }
         let conf_bak = conf.clone();
         let c = c.unwrap();
-        return Ok(Client {
+        Ok(Client {
             conf,
             cookie: Arc::clone(&cookie_store),
             c,
             api_url: ApiUrl::new(&conf_bak),
             date_offset_sec: 0,
-        });
+        })
     }
 
     async fn change_state(&mut self, state: State) {
@@ -369,7 +367,7 @@ impl Client {
         drop(cookie);
         self.save_cookie();
 
-        self.api_url.vpn_param.url = url.to_string().trim_end_matches("/").to_string();
+        self.api_url.vpn_param.url = url.to_string().trim_end_matches('/').to_string();
         let result = self.request::<String>(ApiName::PingVPN, None).await;
         match result {
             Ok(resp) => match resp.code {
@@ -386,7 +384,7 @@ impl Client {
                 println!("failed to ping {}:{}: {}", ip, api_port, err);
             }
         }
-        return false;
+        false
     }
 
     async fn fetch_peer_info(&mut self, public_key: &String) -> Result<RespWgInfo, Error> {
@@ -468,9 +466,9 @@ impl Client {
         let public_key = self.conf.public_key.clone().unwrap();
         let private_key = self.conf.private_key.clone().unwrap();
         let route = wg_info.setting.vpn_route_split;
-        
+
         // corplink config
-        let protocol_version = wg_info.protocol_version.unwrap_or("".to_string());
+        let protocol_version = wg_info.protocol_version.unwrap_or_else(|| "".to_string());
         let wg_conf = WgConf {
             address: wg_info.ip,
             mask: wg_info.ip_mask.parse::<u32>().unwrap(),
@@ -490,7 +488,7 @@ impl Client {
     pub async fn keep_alive_vpn(&mut self, conf: &WgConf, interval: u64) {
         loop {
             println!("keep alive");
-            match self.report_vpn_status(&conf).await {
+            match self.report_vpn_status(conf).await {
                 Ok(_) => (),
                 Err(err) => {
                     println!("keep alive error: {}", err);

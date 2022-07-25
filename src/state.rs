@@ -10,6 +10,6 @@ pub enum State {
 
 impl fmt::Display for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        return write!(f, "{}", self);
+        return write!(f, "{}", self.clone());
     }
 }

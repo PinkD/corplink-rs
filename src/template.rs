@@ -41,14 +41,14 @@ impl Template {
     ///
     /// assert_eq!(s2, "Hi, my name is Vader and I'm a Dart developer.");
     /// ```
-    pub fn render<'a, T: Serialize>(&self, vals: T) -> String {
+    pub fn render<T: Serialize>(&self, vals: T) -> String {
         self.render_named(vals)
     }
 
     ///
     /// See render() for examples.
     ///
-    pub fn render_named<'a, T: Serialize>(&self, vals: T) -> String {
+    pub fn render_named<T: Serialize>(&self, vals: T) -> String {
         let mut parts: Vec<String> = vec![];
         let template_str = &self.src;
 

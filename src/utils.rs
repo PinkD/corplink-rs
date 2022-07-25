@@ -10,7 +10,7 @@ pub async fn read_line() -> String {
 }
 
 pub fn b32_decode(s: &str) -> Vec<u8> {
-    return base32::decode(Alphabet::RFC4648 { padding: true }, s).unwrap();
+    base32::decode(Alphabet::RFC4648 { padding: true }, s).unwrap()
 }
 
 pub fn gen_wg_keypair() -> (String, String) {
@@ -38,5 +38,5 @@ pub fn b64_decode_to_hex(s: &str) -> String {
     for c in data {
         hex.push_str(format!("{c:02x}").as_str());
     }
-    return hex;
+    hex
 }
