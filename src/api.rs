@@ -68,7 +68,9 @@ impl ApiUrl {
         api_template.insert(ApiName::KeepAliveVPN, Template::new(URL_OPERATE_VPN));
         api_template.insert(ApiName::DisconnectVPN, Template::new(URL_OPERATE_VPN));
 
-        let api_url = ApiUrl {
+        
+
+        ApiUrl {
             user_param: UserUrlParam {
                 url: conf.server.clone().unwrap(),
                 os: os.clone(),
@@ -80,9 +82,7 @@ impl ApiUrl {
                 version,
             },
             api_template,
-        };
-
-        api_url
+        }
     }
 
     pub fn get_api_url(&self, name: &ApiName) -> String {
