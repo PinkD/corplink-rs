@@ -165,6 +165,9 @@ graph TD;
 
 # Changelog
 
+- 0.2.3
+  - fix empty `protocol_version`
+  - add privilege check
 - 0.2.2
   - fix wg-corplink not exit if corplink-rs exit accidently
 - 0.2.1
