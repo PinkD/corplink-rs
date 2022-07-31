@@ -1,30 +1,70 @@
+#![cfg(windows)]
+
+use std::io::{Read, Write};
+use std::task::Poll;
+
 use std::path::Path;
-use uds_windows;
+
+use uds_windows::UnixStream;
 
 use tokio::io;
-use tokio::io::{AsyncRead, AsyncWrite, Interest, ReadBuf, Ready};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-pub struct UnixStream {
-    stream: uds_windows::UnixStream,
+// this is a fake async wrapper for uds_windows::UnixStream
+// and poll_xxx functions will hang before the real operation fails
+// TODO: consider implementing an async version in the future
+pub struct WinUnixStream {
+    stream: UnixStream,
 }
 
-impl UnixStream {
-    pub async fn connect<P>(path: P) -> io::Result<UnixStream>
+impl WinUnixStream {
+    pub async fn connect<P>(path: P) -> io::Result<WinUnixStream>
     where
         P: AsRef<Path>,
     {
-        let stream = uds_windows::UnixStream::new(path)?;
-        Ok(UnixStream { stream })
+        let stream = UnixStream::connect(path)?;
+        Ok(WinUnixStream { stream })
+    }
+}
+
+impl AsyncRead for WinUnixStream {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let b =
+            unsafe { &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
+        let n = self.stream.read(b)?;
+        unsafe { buf.assume_init(n) };
+        buf.advance(n);
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for WinUnixStream {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        let size = self.stream.write(&buf)?;
+        Poll::Ready(Ok(size))
     }
 
-    pub async fn ready(&self, interest: Interest) -> io::Result<Ready> {
-        Ok(Ready::READABLE)
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        self.stream.flush()?;
+        Poll::Ready(Ok(()))
     }
-    
-    fn write<'a>(&'a mut self, src: &'a [u8]) -> Write<'a, Self>
-    where
-        Self: Unpin,
-    {
-        self.stream.write(src)
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        self.stream.shutdown(std::net::Shutdown::Both)?;
+        Poll::Ready(Ok(()))
     }
 }

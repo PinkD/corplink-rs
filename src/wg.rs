@@ -8,6 +8,9 @@ use tokio::process::Command;
 
 use crate::{config, utils};
 
+#[cfg(windows)]
+use crate::sock;
+
 pub const ENV_KEY_PROTOCOL_VERSION: &str = "CORPLINK_PROTOCOL_VERSION";
 pub const ENV_KEY_NETWORK_TYPE: &str = "CORPLINK_NETWORK_TYPE";
 
@@ -57,17 +60,36 @@ pub async fn start_wg_go(
         _ => {}
     };
     println!("launch {cmd} with env: {envs:?}");
-    return Command::new(cmd)
-        .args(["-f", name])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .envs(envs)
-        .spawn();
+
+    cfg_if::cfg_if! {
+        if #[cfg(windows)] {
+            return Command::new(cmd)
+                .args([name])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .envs(envs)
+                .spawn();
+        } else {
+            return Command::new(cmd)
+                .args(["-f", name])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .envs(envs)
+                .spawn();
+        }
+    }
 }
 
+#[cfg(not(windows))]
 const SOCKET_DIRECTORY_UNIX: &str = "/var/run/wireguard";
 
-type Conn = tokio::net::UnixStream;
+cfg_if::cfg_if! {
+    if #[cfg(windows)] {
+        type Conn = sock::WinUnixStream;
+    } else {
+        type Conn = tokio::net::UnixStream;
+    }
+}
 pub struct UAPIClient {
     pub name: String,
 }
@@ -79,12 +101,15 @@ impl UAPIClient {
                 let tmp_dir = std::env::temp_dir();
                 let sock_name = format!("{}.sock", self.name);
                 let sock_path = tmp_dir.join(sock_name);
+                let sock_path = sock_path.to_str().unwrap();
             } else {
                 let sock_path = format!("{}/{}.sock", SOCKET_DIRECTORY_UNIX, self.name);
             }
         }
+
         wait_path_exist(&sock_path).await;
-        let conn = tokio::net::UnixStream::connect(sock_path).await?;
+        println!("try to connect unix sock: {sock_path}");
+        let conn = Conn::connect(sock_path).await?;
         Ok(conn)
     }
 
@@ -224,8 +249,9 @@ impl UAPIClient {
 }
 
 async fn wait_path_exist(file: &str) {
-    let mut count = 10;
+    let mut count = 3;
     while count > 0 {
+        // this will always fail on windows
         if std::path::Path::new(file).exists() {
             return;
         }
