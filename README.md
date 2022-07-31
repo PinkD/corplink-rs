@@ -16,7 +16,6 @@ pacman -U corplink-rs-2.1-1-x86_64.pkg.tar.zst
 
 ## 手动编译
 
-> 暂时只支持 Linux
 
 ```bash
 git clone https://github.com/PinkD/corplink-rs --depth 1
@@ -27,6 +26,7 @@ mv target/release/corplink-rs /usr/bin/
 cd ..
 git clone https://github.com/PinkD/wireguard-go --depth 1
 cd wireguard-go
+# you can build with `go build` on windows maunally
 make
 # install wg-corplink to your PATH
 # your can also install it to somewhere else and use wg_binary config to tell corplink-rs where it is
@@ -34,6 +34,8 @@ mv wireguard-go /usr/bin/wg-corplink
 ```
 
 # 用法
+
+> **该程序需要 root 权限来启动 `wg-go` (windows 上需要管理员权限)**
 
 ```bash
 # direct
@@ -49,6 +51,12 @@ systemctl enable corplink-rs.service
 # NOTE: cookies.json is reserved by cookie storage
 systemctl start corplink-rs@test.service
 ```
+
+## windows 特殊说明
+
+windows 中启动 `wg-go` 需要 [wintun](6) 支持，请到官网下载，并将 `wintun.dll` 与 `wg-go` 放到同一目录下(或者环境变量下)
+
+windows 中 `wg-go` 默认使用的 pipe 来实现 ipc ，但是我发现权限有问题，所以改成了 [Windows AF_UNIX](7)
 
 # 配置文件实例
 
@@ -157,7 +165,7 @@ graph TD;
 
 # TODO
 
-- [ ] windows/mac 实现
+- [x] windows/mac 实现
 - [ ] 为不同配置生成不同的 `cookie.json`
 - [x] 自动使用从服务器返回的请求中的时间戳同步时间
 - [x] 自动生成 wg key
@@ -165,6 +173,8 @@ graph TD;
 
 # Changelog
 
+- 0.3.0
+  - add windows/mac support
 - 0.2.3
   - fix empty `protocol_version`
   - add privilege check
@@ -194,6 +204,8 @@ graph TD;
 - [totp][3]
 - [python 版本][4]
 - [wg-corplink][5]
+- [wintun][6]
+- [Windows AF_UNIX][7]
 
 # License
 
@@ -221,3 +233,5 @@ graph TD;
 [3]: https://en.wikipedia.org/wiki/Time-based_one-time_password
 [4]: https://github.com/PinkD/corplink
 [5]: https://github.com/PinkD/wireguard-go
+[6]: https://www.wintun.net/
+[7]: https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/
