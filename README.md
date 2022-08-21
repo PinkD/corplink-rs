@@ -1,6 +1,6 @@
 # corplink-rs
 
-使用 rust 实现的 [飞连][1] 客户端
+使用 rust 实现的 [飞连][1] 客户端，支持 Linux/Windows10/MacOS
 
 # 安装
 
