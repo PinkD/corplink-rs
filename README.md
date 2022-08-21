@@ -165,14 +165,18 @@ graph TD;
 
 # TODO
 
-- [x] windows/mac 实现
+- [ ] 使用 [Tauri][8] 实现界面(~~或许大概可能永远不会有~~)
+- [ ] 实现 TCP 版的 wg 协议
 - [ ] 为不同配置生成不同的 `cookie.json`
+- [x] windows/mac 实现
 - [x] 自动使用从服务器返回的请求中的时间戳同步时间
 - [x] 自动生成 wg key
 - [x] 修复服务端异常断开连接后客户端不会退出的问题
 
 # Changelog
 
+- 0.3.1
+  - fix mac support(on [wg-corplink][5])
 - 0.3.0
   - add windows/mac support
 - 0.2.3
@@ -206,6 +210,7 @@ graph TD;
 - [wg-corplink][5]
 - [wintun][6]
 - [Windows AF_UNIX][7]
+- [Tauri][8]
 
 # License
 
@@ -235,3 +240,4 @@ graph TD;
 [5]: https://github.com/PinkD/wireguard-go
 [6]: https://www.wintun.net/
 [7]: https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/
+[8]: https://github.com/tauri-apps/tauri
