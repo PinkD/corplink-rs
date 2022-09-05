@@ -18,7 +18,7 @@ use crate::state::State;
 use crate::totp::{totp_offset, TIME_STEP};
 use crate::utils;
 
-const COOKIE_FILE: &str = "cookies.json";
+const COOKIE_FILE_SUFFIX: &str = "cookies.json";
 const USER_AGENT: &str = "CorpLink/201000 (GooglePixel; Android 10; en)";
 
 #[derive(Debug)]
@@ -85,7 +85,12 @@ pub async fn get_company_url(code: &str) -> Result<RespCompany, Error> {
 impl Client {
     pub fn new(conf: Config) -> Result<Client, Error> {
         let cookie_store = {
-            let file = fs::File::open(COOKIE_FILE).map(io::BufReader::new);
+            let file = fs::File::open(format!(
+                "{}_{}",
+                conf.interface_name.clone().unwrap(),
+                COOKIE_FILE_SUFFIX
+            ))
+            .map(io::BufReader::new);
             match file {
                 Ok(file) => CookieStore::load_json(file).unwrap(),
                 Err(_) => CookieStore::default(),
@@ -125,7 +130,11 @@ impl Client {
             .write(true)
             .create(true)
             .append(false)
-            .open(COOKIE_FILE)
+            .open(format!(
+                "{}_{}",
+                self.conf.interface_name.clone().unwrap(),
+                COOKIE_FILE_SUFFIX
+            ))
             .map(io::BufWriter::new)
             .unwrap();
         let c = self.cookie.lock().unwrap();

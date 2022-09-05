@@ -2,12 +2,12 @@ mod api;
 mod client;
 mod config;
 mod resp;
+mod sock;
 mod state;
 mod template;
 mod totp;
 mod utils;
 mod wg;
-mod sock;
 
 #[cfg(windows)]
 use is_elevated;
@@ -91,6 +91,7 @@ async fn main() {
         },
     }
 
+    let with_wg_log = conf.debug_wg.clone().unwrap_or_default();
     let mut c = Client::new(conf).unwrap();
     let mut logout_retry = true;
     let wg_conf: Option<WgConf>;
@@ -123,13 +124,14 @@ async fn main() {
     let wg_conf = wg_conf.unwrap();
     let protocol_version = wg_conf.protocol_version.clone();
     let protocol = wg_conf.protocol;
-    let mut process = match wg::start_wg_go(&cmd, &name, protocol, &protocol_version).await {
-        Ok(p) => p,
-        Err(err) => {
-            println!("failed to start wg: {}", err);
-            exit(EPERM);
-        }
-    };
+    let mut process =
+        match wg::start_wg_go(&cmd, &name, protocol, &protocol_version, with_wg_log).await {
+            Ok(p) => p,
+            Err(err) => {
+                println!("failed to start wg: {}", err);
+                exit(EPERM);
+            }
+        };
     let mut uapi = wg::UAPIClient { name: name.clone() };
     match uapi.config_wg(&wg_conf).await {
         Ok(_) => {}

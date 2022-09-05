@@ -43,6 +43,7 @@ pub async fn start_wg_go(
     name: &str,
     protocol: i32,
     protocol_version: &str,
+    with_log: bool,
 ) -> io::Result<tokio::process::Child> {
     let mut envs = HashMap::new();
 
@@ -63,6 +64,12 @@ pub async fn start_wg_go(
 
     cfg_if::cfg_if! {
         if #[cfg(windows)] {
+            if with_log {
+                return Command::new(cmd)
+                    .args([name])
+                    .envs(envs)
+                    .spawn();
+            }
             return Command::new(cmd)
                 .args([name])
                 .stdout(Stdio::null())
@@ -70,6 +77,12 @@ pub async fn start_wg_go(
                 .envs(envs)
                 .spawn();
         } else {
+            if with_log {
+                return Command::new(cmd)
+                    .args(["-f", name])
+                    .envs(envs)
+                    .spawn();
+            }
             return Command::new(cmd)
                 .args(["-f", name])
                 .stdout(Stdio::null())

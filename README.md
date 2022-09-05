@@ -9,7 +9,7 @@
 下载 [release](https://github.com/PinkD/corplink-rs/releases) 中的安装包，并安装
 
 ```bash
-pacman -U corplink-rs-2.1-1-x86_64.pkg.tar.zst
+pacman -U corplink-rs-3.2-1-x86_64.pkg.tar.zst
 ```
 
 > 欢迎贡献其它包管理器的打包脚本
@@ -97,6 +97,8 @@ windows 中 `wg-go` 默认使用的 pipe 来实现 ipc ，但是我发现权限�
   "public_key": "wg public key, can be generated from private key",
   "private_key": "wg private key",
   "server": "server link",
+  // enable wg-go log to debug uapi problems
+  "debug_wg": true,
   // will use corplink as interface name
   "interface_name": "corplink",
   // will use wg-corplink as wireguard-go
@@ -167,7 +169,7 @@ graph TD;
 
 - [ ] 使用 [Tauri][8] 实现界面(~~或许大概可能永远不会有~~)
 - [ ] 实现 TCP 版的 wg 协议
-- [ ] 为不同配置生成不同的 `cookie.json`
+- [x] 为不同配置生成不同的 `cookies.json`
 - [x] windows/mac 实现
 - [x] 自动使用从服务器返回的请求中的时间戳同步时间
 - [x] 自动生成 wg key
@@ -175,6 +177,9 @@ graph TD;
 
 # Changelog
 
+- 0.3.2
+  - separate `cookies.json`
+  - add debug flag for wg-go
 - 0.3.1
   - fix mac support(on [wg-corplink][5])
 - 0.3.0

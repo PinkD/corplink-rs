@@ -26,6 +26,7 @@ pub struct Config {
     pub server: Option<String>,
     pub interface_name: Option<String>,
     pub wg_binary: Option<String>,
+    pub debug_wg: Option<bool>,
     #[serde(skip_serializing)]
     pub conf_file: Option<String>,
     pub state: Option<State>,
