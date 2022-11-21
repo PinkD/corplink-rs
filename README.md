@@ -88,7 +88,8 @@ windows 中 `wg-go` 默认使用的 pipe 来实现 ipc ，但是我发现权限�
   "username": "your_name",
   // support sha256sum hashed pass if you don't use ldap, will ask email for code if not provided
   "password": "your_pass",
-  // default is feilian, can be feilian/ldap/feishu, feishu is not supported yet
+  // default is feilian, can be feilian/ldap/lark(aka feishu)
+  // dingtalk/aad/weixin is not supported yet
   "platform": "ldap",
   "code": "totp code",
   // default is DollarOS(not CentOS)
@@ -177,6 +178,9 @@ graph TD;
 
 # Changelog
 
+- 0.3.3
+  - add feishu tps login support
+  - upgrade dependency
 - 0.3.2
   - separate `cookies.json`
   - add debug flag for wg-go
