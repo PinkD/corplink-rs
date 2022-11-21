@@ -3,6 +3,6 @@
 /pack/test
 config.json
 !/config/config.json
-cookies.json
+*cookies.json
 *.conf
 !template.json

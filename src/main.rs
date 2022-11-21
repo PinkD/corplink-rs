@@ -91,7 +91,7 @@ async fn main() {
         },
     }
 
-    let with_wg_log = conf.debug_wg.clone().unwrap_or_default();
+    let with_wg_log = conf.debug_wg.unwrap_or_default();
     let mut c = Client::new(conf).unwrap();
     let mut logout_retry = true;
     let wg_conf: Option<WgConf>;

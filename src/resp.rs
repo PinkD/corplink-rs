@@ -24,6 +24,20 @@ pub struct RespCompany {
 
 #[derive(serde::Deserialize)]
 pub struct RespLoginMethod {
+    pub login_enable_ldap: bool,
+    pub login_enable: bool,
+    pub login_orders: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RespTpsLoginMethod {
+    pub alias: String,
+    pub login_url: String,
+    pub token: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RespCorplinkLoginMethod {
     pub mfa: bool,
     pub auth: Vec<String>,
 }

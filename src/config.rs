@@ -3,14 +3,23 @@ use tokio::fs;
 
 use serde::{Deserialize, Serialize};
 
-
 use crate::state::State;
 use crate::utils;
 
 const DEFAULT_DEVICE_NAME: &str = "DollarOS";
 const DEFAULT_INTERFACE_NAME: &str = "corplink";
 pub const DEFAULT_CMD_WG_NAME: &str = "wg-corplink";
+
 pub const PLATFORM_LDAP: &str = "ldap";
+pub const PLATFORM_CORPLINK: &str = "feilian";
+// aka feishu
+pub const PLATFORM_LARK: &str = "lark";
+pub const PLATFORM_WEIXIN: &str = "weixin";
+// aka dingding
+pub const PLATFORM_DING_TALK: &str = "dingtalk";
+// unknown
+pub const PLATFORM_AAD: &str = "aad";
+
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -35,7 +44,7 @@ pub struct Config {
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let s = serde_json::to_string_pretty(self).unwrap();
-        return write!(f, "{}", s);
+        write!(f, "{}", s)
     }
 }
 
@@ -50,18 +59,18 @@ impl Config {
 
         conf.conf_file = Some(file.to_string());
         let mut update_conf = false;
-        if conf.interface_name == None {
+        if conf.interface_name.is_none() {
             conf.interface_name = Some(DEFAULT_INTERFACE_NAME.to_string());
             update_conf = true;
         }
-        if conf.wg_binary != None {
+        if conf.wg_binary.is_some() {
             println!("using wg binary {}", conf.wg_binary.clone().unwrap());
         }
-        if conf.device_name == None {
+        if conf.device_name.is_none() {
             conf.device_name = Some(DEFAULT_DEVICE_NAME.to_string());
             update_conf = true;
         }
-        if conf.device_id == None {
+        if conf.device_id.is_none() {
             conf.device_id = Some(format!(
                 "{:x}",
                 md5::compute(&conf.device_name.clone().unwrap())

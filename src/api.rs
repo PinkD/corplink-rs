@@ -7,7 +7,10 @@ use crate::template::Template;
 
 pub const URL_GET_COMPANY: &str = "https://corplink.volcengine.cn/api/match";
 
-const URL_GET_LOGIN_METHOD: &str = "{{url}}/api/lookup?os={{os}}&os_version={{version}}";
+const URL_GET_LOGIN_METHOD: &str = "{{url}}/api/login/setting?os={{os}}&os_version={{version}}";
+const URL_GET_TPS_LOGIN_METHOD: &str = "{{url}}/api/tpslogin/link?os={{os}}&os_version={{version}}";
+const URL_GET_TPS_TOEKN_CHECK: &str = "{{url}}/api/tpslogin/token/check?os={{os}}&os_version={{version}}";
+const URL_GET_CORPLINK_LOGIN_METHOD: &str = "{{url}}/api/lookup?os={{os}}&os_version={{version}}";
 const URL_REQUEST_CODE: &str = "{{url}}/api/login/code/send?os={{os}}&os_version={{version}}";
 const URL_VERIFY_CODE: &str = "{{url}}/api/login/code/verify?os={{os}}&os_version={{version}}";
 const URL_LOGIN_PASSWORD: &str = "{{url}}/api/login?os={{os}}&os_version={{version}}";
@@ -20,6 +23,9 @@ const URL_OPERATE_VPN: &str = "{{url}}/vpn/report?os={{os}}&os_version={{version
 #[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum ApiName {
     LoginMethod,
+    TpsLoginMethod,
+    TpsTokenCheck,
+    CorplinkLoginMethod,
     RequestEmailCode,
     LoginPassword,
     LoginEmail,
@@ -59,6 +65,9 @@ impl ApiUrl {
         let mut api_template = HashMap::new();
 
         api_template.insert(ApiName::LoginMethod, Template::new(URL_GET_LOGIN_METHOD));
+        api_template.insert(ApiName::TpsLoginMethod, Template::new(URL_GET_TPS_LOGIN_METHOD));
+        api_template.insert(ApiName::TpsTokenCheck, Template::new(URL_GET_TPS_TOEKN_CHECK));
+        api_template.insert(ApiName::CorplinkLoginMethod, Template::new(URL_GET_CORPLINK_LOGIN_METHOD));
         api_template.insert(ApiName::RequestEmailCode, Template::new(URL_REQUEST_CODE));
         api_template.insert(ApiName::LoginEmail, Template::new(URL_VERIFY_CODE));
         api_template.insert(ApiName::LoginPassword, Template::new(URL_LOGIN_PASSWORD));
@@ -90,6 +99,9 @@ impl ApiUrl {
         let vpn_param = &self.vpn_param;
         match name {
             ApiName::LoginMethod => self.api_template[name].render(user_param),
+            ApiName::TpsLoginMethod => self.api_template[name].render(user_param),
+            ApiName::TpsTokenCheck => self.api_template[name].render(user_param),
+            ApiName::CorplinkLoginMethod => self.api_template[name].render(user_param),
             ApiName::RequestEmailCode => self.api_template[name].render(user_param),
             ApiName::LoginEmail => self.api_template[name].render(user_param),
             ApiName::LoginPassword => self.api_template[name].render(user_param),

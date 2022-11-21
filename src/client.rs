@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ use serde_json::{json, Map, Value};
 use sha2::Digest;
 
 use crate::api::{ApiName, ApiUrl, URL_GET_COMPANY};
-use crate::config::{Config, WgConf, PLATFORM_LDAP};
+use crate::config::{Config, WgConf, PLATFORM_CORPLINK, PLATFORM_LARK, PLATFORM_LDAP};
 use crate::resp::*;
 use crate::state::State;
 use crate::totp::{totp_offset, TIME_STEP};
@@ -201,33 +202,142 @@ impl Client {
     }
 
     pub fn need_login(&self) -> bool {
-        return self.conf.state == None || self.conf.state.as_ref().unwrap() == &State::Init;
+        return self.conf.state.is_none() || self.conf.state.as_ref().unwrap() == &State::Init;
     }
 
-    pub async fn login(&mut self) -> Result<(), Error> {
-        let method = self.get_login_method().await?;
-        for auth in method.auth {
-            let otp_uri = match auth.as_str() {
+    async fn check_tps_token(&mut self, token: &String) -> Result<String, Error> {
+        // tps confirmed, try to login with token
+        let mut m = Map::new();
+        m.insert("token".to_string(), json!(token));
+
+        let resp = self
+            .request::<RespLogin>(ApiName::TpsTokenCheck, Some(m))
+            .await?;
+        match resp.code {
+            0 => Ok(resp.data.unwrap().url),
+            _ => {
+                let msg = resp.message.unwrap();
+                Err(Error::Error(msg))
+            }
+        }
+    }
+
+    async fn get_otp_uri_from_tps(
+        &mut self,
+        method: &str,
+        url: &String,
+        token: &String,
+    ) -> Result<String, Error> {
+        println!("please visit the following link to auth corplink:\n{url}");
+        println!("old token is: {token}");
+        match method {
+            PLATFORM_LARK => {
+                println!("press enter if you finish auth");
+                let stdin = io::stdin();
+                stdin.lines().next();
+                self.check_tps_token(token).await
+            }
+            _ => {
+                // TODO: add all tps login support
+                panic!("unsupported platform, please contact the developer");
+            }
+        }
+    }
+
+    async fn corplink_login(&mut self) -> Result<String, Error> {
+        let resp = self.get_corplink_login_method().await?;
+        for method in resp.auth {
+            match method.as_str() {
                 "password" => {
-                    let mut otp = String::new();
                     if let Some(password) = &self.conf.password {
                         if !password.is_empty() {
                             println!("try to login with password");
-                            otp = self.login_with_password().await?;
+                            return self.login_with_password(PLATFORM_CORPLINK).await;
                         }
                     }
-                    if otp.is_empty() {
-                        println!("no password provided, fallback to email login");
-                        continue;
-                    }
-                    otp
+                    println!("no password provided, trying other methods");
+                    continue;
                 }
                 "email" => {
                     println!("try to login with code from email");
-                    self.login_with_email().await?
+                    return self.login_with_email().await;
                 }
-                _ => panic!("failed to get otp uri"),
-            };
+                _ => {
+                    println!("unsupported method {method}, trying other methods");
+                }
+            }
+        }
+        panic!("failed to login with corplink");
+    }
+
+    async fn ldap_login(&mut self) -> Result<String, Error> {
+        // I don't know why but we must get login method before login
+        let resp = self.get_corplink_login_method().await?;
+        for method in resp.auth {
+            if method != "password" {
+                continue;
+            }
+            if let Some(password) = &self.conf.password {
+                if !password.is_empty() {
+                    return self.login_with_password(PLATFORM_LDAP).await;
+                } else {
+                    return Err(Error::Error("no password provided".to_string()));
+                }
+            }
+        }
+        panic!("failed to login with ldap");
+    }
+
+    fn is_platform_or_default(&mut self, platform: &str) -> bool {
+        if let Some(p) = &self.conf.platform {
+            return p.is_empty() || platform == p;
+        }
+        true
+    }
+
+    async fn get_otp_uri(
+        &mut self,
+        tps_login: &HashMap<String, RespTpsLoginMethod>,
+        method: &String,
+    ) -> Result<String, Error> {
+        if tps_login.contains_key(method) && self.is_platform_or_default(method) {
+            println!("try to login with third party platform {method}");
+            let resp = tps_login.get(method).unwrap();
+            return self
+                .get_otp_uri_from_tps(method, &resp.login_url, &resp.token)
+                .await;
+        }
+        match method.as_str() {
+            PLATFORM_CORPLINK => {
+                if self.is_platform_or_default(PLATFORM_CORPLINK) {
+                    println!("try to login with platform {PLATFORM_CORPLINK}");
+                    return self.corplink_login().await;
+                }
+            }
+            PLATFORM_LDAP => {
+                if self.is_platform_or_default(PLATFORM_LDAP) {
+                    println!("try to login with platform {PLATFORM_LDAP}");
+                    return self.ldap_login().await;
+                }
+            }
+            _ => {}
+        }
+        Ok(String::new())
+    }
+
+    // choose right login method and login
+    pub async fn login(&mut self) -> Result<(), Error> {
+        let resp = self.get_login_method().await?;
+        let tps_login_resp = self.get_tps_login_method().await?;
+        let mut tps_login = HashMap::new();
+        for resp in tps_login_resp {
+            tps_login.insert(resp.alias.clone(), resp);
+        }
+        for method in resp.login_orders {
+            let otp_uri = self.get_otp_uri(&tps_login, &method).await?;
+            if otp_uri.is_empty() {
+                continue;
+            }
             self.change_state(State::Login).await;
 
             let url = Url::parse(&otp_uri).unwrap();
@@ -248,37 +358,52 @@ impl Client {
             println!("failed to get otp code");
             return Ok(());
         }
-        panic!("no available login method");
+        panic!("no available login method, please provide a valid platform")
     }
 
     async fn get_login_method(&mut self) -> Result<RespLoginMethod, Error> {
+        let resp = self
+            .request::<RespLoginMethod>(ApiName::LoginMethod, None)
+            .await?;
+        Ok(resp.data.unwrap())
+    }
+
+    // get 3rd party login methods and links, only lark(feishu) is tested
+    async fn get_tps_login_method(&mut self) -> Result<Vec<RespTpsLoginMethod>, Error> {
+        let resp = self
+            .request::<Vec<RespTpsLoginMethod>>(ApiName::TpsLoginMethod, None)
+            .await?;
+        Ok(resp.data.unwrap())
+    }
+
+    // get corplink login method, knowing result can be password or email
+    async fn get_corplink_login_method(&mut self) -> Result<RespCorplinkLoginMethod, Error> {
         let mut m = Map::new();
         m.insert("forget_password".to_string(), json!(false));
         m.insert("user_name".to_string(), json!(&self.conf.username));
 
         let resp = self
-            .request::<RespLoginMethod>(ApiName::LoginMethod, Some(m))
+            .request::<RespCorplinkLoginMethod>(ApiName::CorplinkLoginMethod, Some(m))
             .await?;
         Ok(resp.data.unwrap())
     }
 
-    async fn login_with_password(&mut self) -> Result<String, Error> {
+    async fn login_with_password(&mut self, platform: &str) -> Result<String, Error> {
         let mut password = self.conf.password.as_ref().unwrap().clone();
         let mut m = Map::new();
-        if let Some(platfrom) = self.conf.platform.clone() {
-            match platfrom.as_str() {
-                PLATFORM_LDAP => {
-                    m.insert("platform".to_string(), json!(PLATFORM_LDAP));
-                }
-                // TODO: support feishu
-                // feilian
-                _ => {
-                    if password.len() != 64 {
-                        let mut sha = sha2::Sha256::new();
-                        sha.update(password.as_bytes());
-                        password = format!("{:x}", sha.finalize());
-                    } // else: password already convert to sha256sum
-                }
+        match platform {
+            PLATFORM_LDAP => {
+                m.insert("platform".to_string(), json!(PLATFORM_LDAP));
+            }
+            PLATFORM_CORPLINK => {
+                if password.len() != 64 {
+                    let mut sha = sha2::Sha256::new();
+                    sha.update(password.as_bytes());
+                    password = format!("{:x}", sha.finalize());
+                } // else: password already convert to sha256sum
+            }
+            _ => {
+                panic!("invalid platform {platform}")
             }
         }
         m.insert("password".to_string(), json!(password));
@@ -477,7 +602,7 @@ impl Client {
         let route = wg_info.setting.vpn_route_split;
 
         // corplink config
-        let protocol_version = wg_info.protocol_version.unwrap_or_else(|| "".to_string());
+        let protocol_version = wg_info.protocol_version.unwrap_or_default();
         let wg_conf = WgConf {
             address: wg_info.ip,
             mask: wg_info.ip_mask.parse::<u32>().unwrap(),
