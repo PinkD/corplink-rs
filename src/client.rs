@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -85,18 +86,29 @@ pub async fn get_company_url(code: &str) -> Result<RespCompany, Error> {
 
 impl Client {
     pub fn new(conf: Config) -> Result<Client, Error> {
+        let f = conf.conf_file.clone().unwrap();
+        let dir = match path::Path::new(&f).parent() {
+            Some(dir) => dir,
+            None => path::Path::new("."),
+        };
+        let cookie_file = dir.join(format!(
+            "{}_{}",
+            conf.interface_name.clone().unwrap(),
+            COOKIE_FILE_SUFFIX
+        ));
+        println!("cookie file is: {}", cookie_file.to_str().unwrap());
+
         let cookie_store = {
-            let file = fs::File::open(format!(
-                "{}_{}",
-                conf.interface_name.clone().unwrap(),
-                COOKIE_FILE_SUFFIX
-            ))
-            .map(io::BufReader::new);
+            let file = fs::File::open(cookie_file).map(io::BufReader::new);
             match file {
-                Ok(file) => CookieStore::load_json(file).unwrap(),
+                Ok(file) => CookieStore::load_json_all(file).unwrap(),
                 Err(_) => CookieStore::default(),
             }
         };
+        let has_expired = cookie_store.iter_any().any(|cookie| cookie.is_expired());
+        if has_expired {
+            println!("some cookies are expired");
+        }
         let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
 
         let c = ClientBuilder::new()
@@ -161,6 +173,11 @@ impl Client {
             Ok(r) => r,
             Err(err) => return Err(Error::ReqwestError(err)),
         };
+        // TODO: handle special cases
+        if !resp.status().is_success() {
+            let msg = format!("logout becuase of bad resp code: {}", resp.status());
+            return Err(self.handle_logout_err(msg).await);
+        }
 
         self.parse_time_offset_from_date_header(&resp);
 

@@ -178,6 +178,8 @@ graph TD;
 
 # Changelog
 
+- 0.3.4
+  - fix cookie out of date
 - 0.3.3
   - add feishu tps login support
   - upgrade dependency
