@@ -390,7 +390,7 @@ impl Client {
         let resp = self
             .request::<Vec<RespTpsLoginMethod>>(ApiName::TpsLoginMethod, None)
             .await?;
-        Ok(resp.data.unwrap())
+        Ok(resp.data.unwrap_or_default())
     }
 
     // get corplink login method, knowing result can be password or email
