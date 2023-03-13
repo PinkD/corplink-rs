@@ -105,8 +105,8 @@ windows 中 `wg-go` 默认使用的 pipe 来实现 ipc ，但是我发现权限�
   // will use wg-corplink as wireguard-go
   "wg_binary": "wg-corplink",
   // will use the specified server to connect, for example 'HK-1'
-  // default is null, it's response the first vpn server returned by the 'listvpn' API will be used
-  "vpn_server_name": null
+  // name from server list
+  "vpn_server_name": "hk"
 }
 ```
 
@@ -181,6 +181,10 @@ graph TD;
 
 # Changelog
 
+- 0.3.5
+  - fix empty login method list
+  - fix write long data to uapi(by @nolouch)
+  - add vpn server name option(by @nolouch)
 - 0.3.4
   - fix cookie out of date
 - 0.3.3
@@ -229,7 +233,7 @@ graph TD;
 # License
 
 ```license
- Copyright (C) 2022  PinkD
+ Copyright (C) 2023  PinkD, ShuNing
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
