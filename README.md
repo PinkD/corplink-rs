@@ -103,7 +103,10 @@ windows 中 `wg-go` 默认使用的 pipe 来实现 ipc ，但是我发现权限�
   // will use corplink as interface name
   "interface_name": "corplink",
   // will use wg-corplink as wireguard-go
-  "wg_binary": "wg-corplink"
+  "wg_binary": "wg-corplink",
+  // will use the specified server to connect, for example 'HK-1'
+  // default is null, it's response the first vpn server returned by the 'listvpn' API will be used
+  "vpn_server_name": null
 }
 ```
 
