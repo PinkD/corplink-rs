@@ -39,6 +39,7 @@ pub struct Config {
     #[serde(skip_serializing)]
     pub conf_file: Option<String>,
     pub state: Option<State>,
+    pub vpn_server_name: Option<String>,
 }
 
 impl fmt::Display for Config {
