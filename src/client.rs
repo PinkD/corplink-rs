@@ -577,11 +577,18 @@ impl Client {
         let vpn_info = self.list_vpn().await?;
         let mut avalaible = false;
 
-        println!("found {} vpn(s), details: {:?}", vpn_info.len(), vpn_info.iter().map(|i| i.en_name.clone()).collect::<Vec<String>>());
+        println!(
+            "found {} vpn(s), details: {:?}",
+            vpn_info.len(),
+            vpn_info
+                .iter()
+                .map(|i| i.en_name.clone())
+                .collect::<Vec<String>>()
+        );
         let mut vpn_addr = String::new();
         for vpn in vpn_info {
-            if let Some(server_name) =  self.conf.vpn_server_name.clone() {
-                if vpn.en_name != server_name{
+            if let Some(server_name) = self.conf.vpn_server_name.clone() {
+                if vpn.en_name != server_name {
                     println!("skip {}, expect {}", vpn.en_name, server_name);
                     continue;
                 }

@@ -20,7 +20,6 @@ pub const PLATFORM_DING_TALK: &str = "dingtalk";
 // unknown
 pub const PLATFORM_AAD: &str = "aad";
 
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub company_name: String,

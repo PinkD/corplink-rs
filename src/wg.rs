@@ -221,7 +221,8 @@ impl UAPIClient {
                                         // do nothing because it's invalid
                                     } else {
                                         let nt =
-                                            chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0).unwrap();
+                                            chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0)
+                                                .unwrap();
                                         let now = chrono::Utc::now().naive_utc();
                                         let t = now - nt;
                                         let tt: chrono::DateTime<chrono::Utc> =
