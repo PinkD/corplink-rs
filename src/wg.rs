@@ -154,13 +154,16 @@ impl UAPIClient {
         }
         // end operation
         buff.push('\n');
-        let data = buff.as_bytes();
+        let mut data = buff.as_bytes();
 
         println!("send config to uapi");
-        match conn.write(data).await {
-            Ok(_) => {}
-            Err(err) => {
-                return Err(err);
+        while !data.is_empty() {
+            match conn.write(data).await {
+                Ok(n) if n > 0 => {
+                    data = &data[n..];
+                }
+                Ok(_) => break,
+                Err(err) => return Err(err),
             }
         }
         conn.flush().await?;
@@ -218,7 +221,8 @@ impl UAPIClient {
                                         // do nothing because it's invalid
                                     } else {
                                         let nt =
-                                            chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0).unwrap();
+                                            chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0)
+                                                .unwrap();
                                         let now = chrono::Utc::now().naive_utc();
                                         let t = now - nt;
                                         let tt: chrono::DateTime<chrono::Utc> =

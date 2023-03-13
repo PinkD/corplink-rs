@@ -20,7 +20,6 @@ pub const PLATFORM_DING_TALK: &str = "dingtalk";
 // unknown
 pub const PLATFORM_AAD: &str = "aad";
 
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub company_name: String,
@@ -39,6 +38,7 @@ pub struct Config {
     #[serde(skip_serializing)]
     pub conf_file: Option<String>,
     pub state: Option<State>,
+    pub vpn_server_name: Option<String>,
 }
 
 impl fmt::Display for Config {
