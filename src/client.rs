@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
 
+use cookie::Cookie as RawCookie;
 use cookie_store::{Cookie, CookieStore};
+use reqwest::header;
 use reqwest::{ClientBuilder, Response, Url};
 use reqwest_cookie_store::CookieStoreMutex;
 use serde::de::DeserializeOwned;
@@ -98,7 +100,7 @@ impl Client {
         ));
         println!("cookie file is: {}", cookie_file.to_str().unwrap());
 
-        let cookie_store = {
+        let mut cookie_store = {
             let file = fs::File::open(cookie_file).map(io::BufReader::new);
             match file {
                 Ok(file) => CookieStore::load_json_all(file).unwrap(),
@@ -109,6 +111,31 @@ impl Client {
         if has_expired {
             println!("some cookies are expired");
         }
+
+        let mut headers = header::HeaderMap::new();
+
+        if let Some(server) = &conf.server.clone() {
+            let server_url = Url::from_str(server.as_str()).unwrap();
+
+            if let Some(device_id) = &conf.device_id.clone() {
+                let _ =
+                    cookie_store.insert_raw(&RawCookie::new("device_id", device_id), &server_url);
+            }
+            if let Some(device_name) = &conf.device_name.clone() {
+                let _ = cookie_store
+                    .insert_raw(&RawCookie::new("device_name", device_name), &server_url);
+            }
+
+            if let Some(csrf_token) =
+                cookie_store.get(server_url.domain().unwrap(), "/", "csrf-token")
+            {
+                headers.insert(
+                    "csrf-token",
+                    header::HeaderValue::from_str(csrf_token.value()).unwrap(),
+                );
+            }
+        }
+
         let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
 
         let c = ClientBuilder::new()
@@ -118,6 +145,7 @@ impl Client {
             // .proxy(reqwest::Proxy::all("socks5://192.168.111.233:8001").unwrap())
             .user_agent(USER_AGENT)
             .cookie_provider(Arc::clone(&cookie_store))
+            .default_headers(headers)
             .build();
         if let Err(err) = c {
             return Err(Error::ReqwestError(err));
@@ -351,8 +379,14 @@ impl Client {
             tps_login.insert(resp.alias.clone(), resp);
         }
         for method in resp.login_orders {
-            let otp_uri = self.get_otp_uri(&tps_login, &method).await?;
+            let otp_uri = self.get_otp_uri(&tps_login, &method).await;
+            if let Err(e) = otp_uri {
+                println!("failed to login with method {method}: {e}");
+                continue;
+            }
+            let otp_uri = otp_uri.unwrap();
             if otp_uri.is_empty() {
+                println!("failed to login with method {method}");
                 continue;
             }
             self.change_state(State::Login).await;

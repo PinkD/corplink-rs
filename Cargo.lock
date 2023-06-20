@@ -188,7 +188,7 @@ checksum = "5827cebf4670468b8772dd191856768aedcb1b0278a04f989f7766351917b9dc"
 
 [[package]]
 name = "corplink-rs"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "base32",
  "base64",
