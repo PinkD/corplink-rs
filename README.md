@@ -58,6 +58,10 @@ windows 中启动 `wg-go` 需要 [wintun](6) 支持，请到官网下载，并�
 
 windows 中 `wg-go` 默认使用的 pipe 来实现 ipc ，但是我发现权限有问题，所以改成了 [Windows AF_UNIX](7)
 
+## macos 特殊说明
+
+macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需要将配置文件中的 `interface_name` 改为符合正则的名字，例如 `utun114514`
+
 # 配置文件实例
 
 最小配置
