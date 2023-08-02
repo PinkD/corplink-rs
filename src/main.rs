@@ -12,7 +12,7 @@ mod wg;
 #[cfg(windows)]
 use is_elevated;
 use std::{env, process::exit};
-
+use std::process::Command;
 use client::Client;
 use config::{Config, WgConf};
 
@@ -59,6 +59,8 @@ async fn main() {
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
+
+    kill_process_if_exists(config::DEFAULT_CMD_WG_NAME);
 
     let cmd = match conf.wg_binary.clone() {
         Some(cmd) => cmd,
@@ -209,4 +211,14 @@ fn print_version() {
     let pkg_name = env!("CARGO_PKG_NAME");
     let pkg_version = env!("CARGO_PKG_VERSION");
     println!("running {}@{}", pkg_name, pkg_version);
+}
+
+fn kill_process_if_exists(process_name: &str) {
+    let output = Command::new("pkill")
+        .arg(process_name)
+        .output()
+        .expect("Failed to execute pkill command");
+     if output.status.success() {
+        println!("Process {} killed successfully", process_name);
+    }
 }
