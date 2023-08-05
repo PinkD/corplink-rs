@@ -13,6 +13,7 @@ mod wg;
 use is_elevated;
 use std::{env, process::exit};
 use std::process::Command;
+
 use client::Client;
 use config::{Config, WgConf};
 
@@ -59,8 +60,9 @@ async fn main() {
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
+    let name = conf.interface_name.clone().unwrap();
 
-    kill_process_if_exists(config::DEFAULT_CMD_WG_NAME);
+    kill_process_by_interface(&name);
 
     let cmd = match conf.wg_binary.clone() {
         Some(cmd) => cmd,
@@ -71,7 +73,6 @@ async fn main() {
         exit(ENOENT)
     }
 
-    let name = conf.interface_name.clone().unwrap();
     match conf.server {
         Some(_) => {}
         None => match client::get_company_url(conf.company_name.as_str()).await {
@@ -213,12 +214,32 @@ fn print_version() {
     println!("running {}@{}", pkg_name, pkg_version);
 }
 
-fn kill_process_if_exists(process_name: &str) {
+// Kills a process by interface name.
+fn kill_process_by_interface(interface_name: &str) {
     let output = Command::new("pkill")
-        .arg(process_name)
-        .output()
-        .expect("Failed to execute pkill command");
-     if output.status.success() {
-        println!("Process {} killed successfully", process_name);
+        .arg("-f")
+        .arg(interface_name)
+        .output();
+
+    match output {
+        Ok(output) => {
+            match output.status.code() {
+                Some(0) => {
+                    println!("WG process with interface named {} killed successfully", interface_name);
+                }
+                Some(1) => {
+                    println!("No WG processes matched the criteria");
+                }
+                Some(code) => {
+                    println!("Failed to execute pkill command with exit code: {}", code);
+                }
+                None => {
+                    println!("Failed to execute pkill command");
+                }
+            }
+        }
+        Err(err) => {
+            println!("Failed to execute pkill command: {}", err);
+        }
     }
 }
