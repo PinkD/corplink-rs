@@ -62,7 +62,7 @@ async fn main() {
     let mut conf = Config::from_file(&conf_file).await;
     let name = conf.interface_name.clone().unwrap();
 
-    kill_process_by_interface(&name);
+    kill_process_if_exists(config::DEFAULT_CMD_WG_NAME, &name);
 
     let cmd = match conf.wg_binary.clone() {
         Some(cmd) => cmd,
@@ -214,11 +214,13 @@ fn print_version() {
     println!("running {}@{}", pkg_name, pkg_version);
 }
 
-// Kills a process by interface name.
-fn kill_process_by_interface(interface_name: &str) {
+// Kills a process by full command.
+#[cfg(not(windows))]
+fn kill_process_if_exists(process_name: &str, interface_name: &str) {
+    let full_command = format!("{} -f {}", process_name, interface_name);
     let output = Command::new("pkill")
         .arg("-f")
-        .arg(interface_name)
+        .arg(full_command)
         .output();
 
     match output {
@@ -241,5 +243,23 @@ fn kill_process_by_interface(interface_name: &str) {
         Err(err) => {
             println!("Failed to execute pkill command: {}", err);
         }
+    }
+}
+
+#[cfg(windows)]
+fn kill_process(process_name: &str, interface_name: &str) {
+    let full_command = format!("{} -f {}", process_name, interface_name);
+
+    let output = std::process::Command::new("taskkill")
+        .arg("/F")
+        .arg("/IM")
+        .arg(&full_command)
+        .output()
+        .expect("Failed to execute taskkill command");
+
+    if output.status.success() {
+        println!("Process with interface named {} killed successfully", interface_name);
+    } else {
+        println!("Failed to kill process");
     }
 }
