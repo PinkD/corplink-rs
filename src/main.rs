@@ -248,14 +248,15 @@ fn kill_process_if_exists(process_name: &str, interface_name: &str) {
 
 #[cfg(windows)]
 fn kill_process(process_name: &str, interface_name: &str) {
-    let full_command = format!("{} -f {}", process_name, interface_name);
+    let full_command = format!(
+        r#"Path win32_process Where "CommandLine Like '%-f {}%' And Name Like '{}'" Call Terminate"#,
+        interface_name, process_name
+    );
 
-    let output = std::process::Command::new("taskkill")
-        .arg("/F")
-        .arg("/IM")
+    let output = std::process::Command::new("wmic")
         .arg(&full_command)
         .output()
-        .expect("Failed to execute taskkill command");
+        .expect("Failed to execute wmic command");
 
     if output.status.success() {
         println!("Process with interface named {} killed successfully", interface_name);
