@@ -185,6 +185,9 @@ graph TD;
 
 # Changelog
 
+- 0.3.6
+  - fix wg-corplink not exit(by @LionheartLann)
+  - fix session is expired(by @XYenon)
 - 0.3.5
   - fix empty login method list
   - fix write long data to uapi(by @nolouch)
@@ -237,7 +240,7 @@ graph TD;
 # License
 
 ```license
- Copyright (C) 2023  PinkD, ShuNing
+ Copyright (C) 2023  PinkD, ShuNing, LionheartLann, XYenon
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License

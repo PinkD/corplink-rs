@@ -2,7 +2,7 @@
 
 pkgname=corplink-rs
 _pkgbase=corplink-rs
-pkgver=3.5
+pkgver=3.6
 pkgrel=1
 pkgdesc='Corplink client written in Rust'
 arch=('i686' 'x86_64')
