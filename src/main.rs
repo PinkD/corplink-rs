@@ -12,6 +12,7 @@ mod wg;
 #[cfg(windows)]
 use is_elevated;
 use std::{env, process::exit};
+use std::process::Command;
 
 use client::Client;
 use config::{Config, WgConf};
@@ -59,6 +60,9 @@ async fn main() {
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
+    let name = conf.interface_name.clone().unwrap();
+
+    kill_process_if_exists(config::DEFAULT_CMD_WG_NAME, &name);
 
     let cmd = match conf.wg_binary.clone() {
         Some(cmd) => cmd,
@@ -69,7 +73,6 @@ async fn main() {
         exit(ENOENT)
     }
 
-    let name = conf.interface_name.clone().unwrap();
     match conf.server {
         Some(_) => {}
         None => match client::get_company_url(conf.company_name.as_str()).await {
@@ -209,4 +212,55 @@ fn print_version() {
     let pkg_name = env!("CARGO_PKG_NAME");
     let pkg_version = env!("CARGO_PKG_VERSION");
     println!("running {}@{}", pkg_name, pkg_version);
+}
+
+// Kills a process by full command.
+#[cfg(not(windows))]
+fn kill_process_if_exists(process_name: &str, interface_name: &str) {
+    let full_command = format!("{} -f {}", process_name, interface_name);
+    let output = Command::new("pkill")
+        .arg("-f")
+        .arg(full_command)
+        .output();
+
+    match output {
+        Ok(output) => {
+            match output.status.code() {
+                Some(0) => {
+                    println!("WG process with interface named {} killed successfully", interface_name);
+                }
+                Some(1) => {
+                    println!("No WG processes matched the criteria");
+                }
+                Some(code) => {
+                    println!("Failed to execute pkill command with exit code: {}", code);
+                }
+                None => {
+                    println!("Failed to execute pkill command");
+                }
+            }
+        }
+        Err(err) => {
+            println!("Failed to execute pkill command: {}", err);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn kill_process(process_name: &str, interface_name: &str) {
+    let full_command = format!(
+        r#"Path win32_process Where "CommandLine Like '%-f {}%' And Name Like '{}'" Call Terminate"#,
+        interface_name, process_name
+    );
+
+    let output = std::process::Command::new("wmic")
+        .arg(&full_command)
+        .output()
+        .expect("Failed to execute wmic command");
+
+    if output.status.success() {
+        println!("Process with interface named {} killed successfully", interface_name);
+    } else {
+        println!("Failed to kill process");
+    }
 }
