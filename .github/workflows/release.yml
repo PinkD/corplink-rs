@@ -13,7 +13,7 @@ jobs:
         uses: actions/checkout@v2
       - name: build package
         id: build_package
-        uses: PinkD/arch-pkgbuild-builder@v2.1
+        uses: PinkD/arch-pkgbuild-builder@v2.2
         with:
           target: "pkgbuild"
           pkgname: "pack"
