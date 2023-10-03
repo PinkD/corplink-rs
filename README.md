@@ -9,7 +9,7 @@
 下载 [release](https://github.com/PinkD/corplink-rs/releases) 中的安装包，并安装
 
 ```bash
-pacman -U corplink-rs-3.2-1-x86_64.pkg.tar.zst
+pacman -U corplink-rs-4.0-1-x86_64.pkg.tar.zst
 ```
 
 > 欢迎贡献其它包管理器的打包脚本
@@ -27,10 +27,10 @@ cd ..
 git clone https://github.com/PinkD/wireguard-go --depth 1
 cd wireguard-go
 # you can build with `go build` on windows maunally
-make
+make libwg
 # install wg-corplink to your PATH
 # your can also install it to somewhere else and use wg_binary config to tell corplink-rs where it is
-mv wireguard-go /usr/bin/wg-corplink
+cp libwg.* ../corplink-rs/libwg/
 ```
 
 # 用法
@@ -54,9 +54,7 @@ systemctl start corplink-rs@test.service
 
 ## windows 特殊说明
 
-windows 中启动 `wg-go` 需要 [wintun](6) 支持，请到官网下载，并将 `wintun.dll` 与 `wg-go` 放到同一目录下(或者环境变量下)
-
-windows 中 `wg-go` 默认使用的 pipe 来实现 ipc ，但是我发现权限有问题，所以改成了 [Windows AF_UNIX](7)
+windows 中启动 `wg-go` 需要 [wintun](6) 支持，请到官网下载，并将 `wintun.dll` 与 `corplink-rs` 放到同一目录下(或者环境变量下)
 
 ## macos 特殊说明
 
@@ -106,8 +104,6 @@ macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需�
   "debug_wg": true,
   // will use corplink as interface name
   "interface_name": "corplink",
-  // will use wg-corplink as wireguard-go
-  "wg_binary": "wg-corplink",
   // will use the specified server to connect, for example 'HK-1'
   // name from server list
   "vpn_server_name": "hk"
@@ -175,7 +171,7 @@ graph TD;
 
 # TODO
 
-- [ ] 使用 [Tauri][8] 实现界面(~~或许大概可能永远不会有~~)
+- [ ] 使用 [Tauri][7] 实现界面(~~或许大概可能永远不会有~~)
 - [ ] 实现 TCP 版的 wg 协议
 - [x] 为不同配置生成不同的 `cookies.json`
 - [x] windows/mac 实现
@@ -185,6 +181,8 @@ graph TD;
 
 # Changelog
 
+- 0.4.0
+  - embed wg-go with cgo
 - 0.3.6
   - fix wg-corplink not exit(by @LionheartLann)
   - fix session is expired(by @XYenon)
@@ -234,8 +232,7 @@ graph TD;
 - [python 版本][4]
 - [wg-corplink][5]
 - [wintun][6]
-- [Windows AF_UNIX][7]
-- [Tauri][8]
+- [Tauri][7]
 
 # License
 
@@ -264,5 +261,4 @@ graph TD;
 [4]: https://github.com/PinkD/corplink
 [5]: https://github.com/PinkD/wireguard-go
 [6]: https://www.wintun.net/
-[7]: https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/
-[8]: https://github.com/tauri-apps/tauri
+[7]: https://github.com/tauri-apps/tauri

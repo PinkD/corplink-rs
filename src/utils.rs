@@ -2,6 +2,8 @@ use std::error::Error;
 use std::io::{self, BufRead};
 
 use base32::Alphabet;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as base64;
 use rand::rngs::OsRng;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -15,25 +17,25 @@ pub fn b32_decode(s: &str) -> Vec<u8> {
 
 pub fn gen_wg_keypair() -> (String, String) {
     let csprng = OsRng {};
-    let sk = StaticSecret::new(csprng);
+    let sk = StaticSecret::random_from_rng(csprng);
     let pk = PublicKey::from(&sk);
-    (base64::encode(pk.to_bytes()), base64::encode(sk.to_bytes()))
+    (base64.encode(pk.to_bytes()), base64.encode(sk.to_bytes()))
 }
 
 pub fn gen_public_key_from_private(private_key: &String) -> Result<String, Box<dyn Error>> {
-    match base64::decode(private_key) {
+    match base64.decode(private_key) {
         Ok(key) => {
             let key: [u8; 32] = key.try_into().unwrap();
             let sk = StaticSecret::from(key);
             let public_key = PublicKey::from(&sk);
-            Ok(base64::encode(public_key.to_bytes()))
+            Ok(base64.encode(public_key.to_bytes()))
         }
         Err(e) => Err(format!("failed to base64 decode {}: {}", private_key, e).into()),
     }
 }
 
 pub fn b64_decode_to_hex(s: &str) -> String {
-    let data = base64::decode(s).unwrap();
+    let data = base64.decode(s).unwrap();
     let mut hex = String::new();
     for c in data {
         hex.push_str(format!("{c:02x}").as_str());

@@ -12,7 +12,6 @@ mod wg;
 #[cfg(windows)]
 use is_elevated;
 use std::{env, process::exit};
-use std::process::Command;
 
 use client::Client;
 use config::{Config, WgConf};
@@ -62,22 +61,11 @@ async fn main() {
     let mut conf = Config::from_file(&conf_file).await;
     let name = conf.interface_name.clone().unwrap();
 
-    kill_process_if_exists(config::DEFAULT_CMD_WG_NAME, &name);
-
-    let cmd = match conf.wg_binary.clone() {
-        Some(cmd) => cmd,
-        None => config::DEFAULT_CMD_WG_NAME.to_string(),
-    };
-    if !wg::cmd_exist(cmd.as_str()).await {
-        println!("please download {} from the repo release page", cmd);
-        exit(ENOENT)
-    }
-
     match conf.server {
         Some(_) => {}
         None => match client::get_company_url(conf.company_name.as_str()).await {
             Ok(resp) => {
-                println!(
+                log::info!(
                     "company name is {}(zh)/{}(en) server is {}",
                     resp.zh_name, resp.en_name, resp.domain
                 );
@@ -85,7 +73,7 @@ async fn main() {
                 conf.save().await;
             }
             Err(err) => {
-                println!(
+                log::error!(
                     "failed to fetch company server from company name {}: {}",
                     conf.company_name, err
                 );
@@ -101,11 +89,11 @@ async fn main() {
 
     loop {
         if c.need_login() {
-            println!("not login yet, try to login");
+            log::info!("not login yet, try to login");
             c.login().await.unwrap();
-            println!("login success");
+            log::info!("login success");
         }
-        println!("try to connect");
+        log::info!("try to connect");
         match c.connect_vpn().await {
             Ok(conf) => {
                 wg_conf = Some(conf);
@@ -114,7 +102,7 @@ async fn main() {
             Err(e) => {
                 if logout_retry && e.to_string().contains("logout") {
                     // e contains detail message, so just print it out
-                    println!("{}", e);
+                    log::warn!("{}", e);
                     logout_retry = false;
                     continue;
                 } else {
@@ -123,23 +111,18 @@ async fn main() {
             }
         };
     }
-    println!("start {} for {}", cmd, &name);
+    log::info!("start wg-corplink for {}", &name);
     let wg_conf = wg_conf.unwrap();
-    let protocol_version = wg_conf.protocol_version.clone();
     let protocol = wg_conf.protocol;
-    let mut process =
-        match wg::start_wg_go(&cmd, &name, protocol, &protocol_version, with_wg_log).await {
-            Ok(p) => p,
-            Err(err) => {
-                println!("failed to start wg: {}", err);
-                exit(EPERM);
-            }
-        };
+    if !wg::start_wg_go(&name, protocol, with_wg_log) {
+        log::warn!("failed to start wg-corplink for {}", name);
+        exit(EPERM);
+    }
     let mut uapi = wg::UAPIClient { name: name.clone() };
     match uapi.config_wg(&wg_conf).await {
         Ok(_) => {}
         Err(err) => {
-            println!("failed to config interface with uapi for {}: {}", name, err);
+            log::error!("failed to config interface with uapi for {}: {}", name, err);
             exit(EPERM);
         }
     }
@@ -151,10 +134,10 @@ async fn main() {
             match tokio::signal::ctrl_c().await {
                 Ok(_) => {},
                 Err(e) => {
-                    println!("failed to receive signal: {}",e);
+                    log::warn!("failed to receive signal: {}",e);
                 },
             }
-            println!("ctrl+v received");
+            log::info!("ctrl+v received");
         } => {},
 
         // keep alive
@@ -165,29 +148,22 @@ async fn main() {
         // check wg handshake and exit if timeout
         _ = async {
             uapi.check_wg_connection().await;
-            println!("last handshake timeout");
+            log::warn!("last handshake timeout");
         } => {
             exit_code = ETIMEDOUT;
         },
     }
 
     // shutdown
-    println!("disconnecting vpn...");
+    log::info!("disconnecting vpn...");
     match c.disconnect_vpn(&wg_conf).await {
         Ok(_) => {}
-        Err(e) => println!("failed to disconnect vpn: {}", e),
+        Err(e) => log::warn!("failed to disconnect vpn: {}", e),
     };
 
-    println!("killing {}...", cmd);
-    match process.kill().await {
-        Ok(_) => {
-            println!("{} killed", cmd);
-        }
-        Err(err) => {
-            println!("failed to kill {}: {}", cmd, err);
-        }
-    }
-    println!("reach exit");
+    wg::stop_wg_go();
+
+    log::info!("reach exit");
     exit(exit_code)
 }
 
@@ -196,14 +172,14 @@ fn check_previlige() {
     match sudo::escalate_if_needed() {
         Ok(_) => {}
         Err(_) => {
-            println!("please run as root");
+            log::error!("please run as root");
             exit(EPERM);
         }
     }
 
     #[cfg(windows)]
     if !is_elevated::is_elevated() {
-        println!("please run as administrator");
+        log::error!("please run as administrator");
         exit(EPERM);
     }
 }
@@ -211,56 +187,5 @@ fn check_previlige() {
 fn print_version() {
     let pkg_name = env!("CARGO_PKG_NAME");
     let pkg_version = env!("CARGO_PKG_VERSION");
-    println!("running {}@{}", pkg_name, pkg_version);
-}
-
-// Kills a process by full command.
-#[cfg(not(windows))]
-fn kill_process_if_exists(process_name: &str, interface_name: &str) {
-    let full_command = format!("{} -f {}", process_name, interface_name);
-    let output = Command::new("pkill")
-        .arg("-f")
-        .arg(full_command)
-        .output();
-
-    match output {
-        Ok(output) => {
-            match output.status.code() {
-                Some(0) => {
-                    println!("WG process with interface named {} killed successfully", interface_name);
-                }
-                Some(1) => {
-                    println!("No WG processes matched the criteria");
-                }
-                Some(code) => {
-                    println!("Failed to execute pkill command with exit code: {}", code);
-                }
-                None => {
-                    println!("Failed to execute pkill command");
-                }
-            }
-        }
-        Err(err) => {
-            println!("Failed to execute pkill command: {}", err);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn kill_process(process_name: &str, interface_name: &str) {
-    let full_command = format!(
-        r#"Path win32_process Where "CommandLine Like '%-f {}%' And Name Like '{}'" Call Terminate"#,
-        interface_name, process_name
-    );
-
-    let output = std::process::Command::new("wmic")
-        .arg(&full_command)
-        .output()
-        .expect("Failed to execute wmic command");
-
-    if output.status.success() {
-        println!("Process with interface named {} killed successfully", interface_name);
-    } else {
-        println!("Failed to kill process");
-    }
+    log::info!("running {}@{}", pkg_name, pkg_version);
 }

@@ -98,7 +98,7 @@ impl Client {
             conf.interface_name.clone().unwrap(),
             COOKIE_FILE_SUFFIX
         ));
-        println!("cookie file is: {}", cookie_file.to_str().unwrap());
+        log::info!("cookie file is: {}", cookie_file.to_str().unwrap());
 
         let mut cookie_store = {
             let file = fs::File::open(cookie_file).map(io::BufReader::new);
@@ -109,7 +109,7 @@ impl Client {
         };
         let has_expired = cookie_store.iter_any().any(|cookie| cookie.is_expired());
         if has_expired {
-            println!("some cookies are expired");
+            log::info!("some cookies are expired");
         }
 
         let mut headers = header::HeaderMap::new();
@@ -211,7 +211,7 @@ impl Client {
 
         for (name, _) in resp.headers() {
             if name.to_string().to_lowercase() == "set-cookie" {
-                println!("found set-cookie in header, saving cookie");
+                log::info!("found set-cookie in header, saving cookie");
                 self.save_cookie();
                 break;
             }
@@ -240,7 +240,7 @@ impl Client {
                     };
                 }
                 Err(e) => {
-                    println!("failed to parse date in header, ignore it: {}", e);
+                    log::warn!("failed to parse date in header, ignore it: {}", e);
                 }
             }
         }
@@ -273,11 +273,11 @@ impl Client {
         url: &String,
         token: &String,
     ) -> Result<String, Error> {
-        println!("please visit the following link to auth corplink:\n{url}");
-        println!("old token is: {token}");
+        log::info!("please visit the following link to auth corplink:\n{url}");
+        log::info!("old token is: {token}");
         match method {
             PLATFORM_LARK => {
-                println!("press enter if you finish auth");
+                log::info!("press enter if you finish auth");
                 let stdin = io::stdin();
                 stdin.lines().next();
                 self.check_tps_token(token).await
@@ -296,19 +296,19 @@ impl Client {
                 "password" => {
                     if let Some(password) = &self.conf.password {
                         if !password.is_empty() {
-                            println!("try to login with password");
+                            log::info!("try to login with password");
                             return self.login_with_password(PLATFORM_CORPLINK).await;
                         }
                     }
-                    println!("no password provided, trying other methods");
+                    log::info!("no password provided, trying other methods");
                     continue;
                 }
                 "email" => {
-                    println!("try to login with code from email");
+                    log::info!("try to login with code from email");
                     return self.login_with_email().await;
                 }
                 _ => {
-                    println!("unsupported method {method}, trying other methods");
+                    log::info!("unsupported method {method}, trying other methods");
                 }
             }
         }
@@ -346,7 +346,7 @@ impl Client {
         method: &String,
     ) -> Result<String, Error> {
         if tps_login.contains_key(method) && self.is_platform_or_default(method) {
-            println!("try to login with third party platform {method}");
+            log::info!("try to login with third party platform {method}");
             let resp = tps_login.get(method).unwrap();
             return self
                 .get_otp_uri_from_tps(method, &resp.login_url, &resp.token)
@@ -355,13 +355,13 @@ impl Client {
         match method.as_str() {
             PLATFORM_CORPLINK => {
                 if self.is_platform_or_default(PLATFORM_CORPLINK) {
-                    println!("try to login with platform {PLATFORM_CORPLINK}");
+                    log::info!("try to login with platform {PLATFORM_CORPLINK}");
                     return self.corplink_login().await;
                 }
             }
             PLATFORM_LDAP => {
                 if self.is_platform_or_default(PLATFORM_LDAP) {
-                    println!("try to login with platform {PLATFORM_LDAP}");
+                    log::info!("try to login with platform {PLATFORM_LDAP}");
                     return self.ldap_login().await;
                 }
             }
@@ -381,12 +381,12 @@ impl Client {
         for method in resp.login_orders {
             let otp_uri = self.get_otp_uri(&tps_login, &method).await;
             if let Err(e) = otp_uri {
-                println!("failed to login with method {method}: {e}");
+                log::warn!("failed to login with method {method}: {e}");
                 continue;
             }
             let otp_uri = otp_uri.unwrap();
             if otp_uri.is_empty() {
-                println!("failed to login with method {method}");
+                log::warn!("failed to login with method {method}");
                 continue;
             }
             self.change_state(State::Login).await;
@@ -394,7 +394,7 @@ impl Client {
             let url = Url::parse(&otp_uri).unwrap();
             for (k, v) in url.query_pairs() {
                 if k == "secret" {
-                    println!("got 2fa token: {}", &v);
+                    log::info!("got 2fa token: {}", &v);
                     self.conf.code = Some(v.to_string());
                     self.conf.save().await;
                     break;
@@ -406,7 +406,7 @@ impl Client {
                     return Ok(());
                 }
             }
-            println!("failed to get otp code");
+            log::warn!("failed to get otp code");
             return Ok(());
         }
         panic!("no available login method, please provide a valid platform")
@@ -485,10 +485,10 @@ impl Client {
 
     async fn login_with_email(&mut self) -> Result<String, Error> {
         // tell server to send code to email
-        println!("try to request code for email");
+        log::info!("try to request code for email");
         self.request_email_code().await?;
 
-        println!("input your code from email:");
+        log::info!("input your code from email:");
         let input = utils::read_line().await;
         let code = input.trim();
         let mut m = Map::new();
@@ -530,35 +530,35 @@ impl Client {
     }
 
     async fn ping_vpn(&mut self, ip: String, api_port: u16) -> bool {
-        // config cookie
-        let mut cookie = self.cookie.lock().unwrap();
-        let server_url = self.conf.server.clone().unwrap();
+        {
+            // config cookie
+            let mut cookie = self.cookie.lock().unwrap();
+            let server_url = self.conf.server.clone().unwrap();
 
-        let mut url = Url::from_str(&server_url).unwrap();
-        let mut cookies: Vec<Cookie> = Vec::new();
-        for c in cookie.iter_any() {
-            if c.domain.matches(&url.clone()) {
-                cookies.push(c.clone());
+            let mut url = Url::from_str(&server_url).unwrap();
+            let mut cookies: Vec<Cookie> = Vec::new();
+            for c in cookie.iter_any() {
+                if c.domain.matches(&url.clone()) {
+                    cookies.push(c.clone());
+                }
             }
+            url.set_host(Some(ip.as_str())).unwrap();
+            url.set_port(Some(api_port)).unwrap();
+            for c in cookies {
+                let mut c = cookie::Cookie::new(c.name().to_string(), c.value().to_string());
+                c.set_domain(ip.clone());
+                let c = Cookie::try_from_raw_cookie(&c, &url.clone()).unwrap();
+                cookie.insert(c, &url.clone()).unwrap();
+            }
+            self.api_url.vpn_param.url = url.to_string().trim_end_matches('/').to_string();
         }
-        url.set_host(Some(ip.as_str())).unwrap();
-        url.set_port(Some(api_port)).unwrap();
-        for c in cookies {
-            let mut c = cookie::Cookie::new(c.name().to_string(), c.value().to_string());
-            c.set_domain(ip.clone());
-            let c = Cookie::try_from_raw_cookie(&c, &url.clone()).unwrap();
-            cookie.insert(c, &url.clone()).unwrap();
-        }
-        drop(cookie);
         self.save_cookie();
-
-        self.api_url.vpn_param.url = url.to_string().trim_end_matches('/').to_string();
         let result = self.request::<String>(ApiName::PingVPN, None).await;
         match result {
             Ok(resp) => match resp.code {
                 0 => return true,
                 _ => {
-                    println!(
+                    log::warn!(
                         "failed to ping vpn with error {}: {}",
                         resp.code,
                         resp.message.unwrap()
@@ -566,7 +566,7 @@ impl Client {
                 }
             },
             Err(err) => {
-                println!("failed to ping {}:{}: {}", ip, api_port, err);
+                log::warn!("failed to ping {}:{}: {}", ip, api_port, err);
             }
         }
         false
@@ -580,14 +580,14 @@ impl Client {
                 let offset = self.date_offset_sec / TIME_STEP as i32;
                 let raw_otp = totp_offset(code.as_slice(), offset);
                 otp = format!("{:06}", raw_otp.code);
-                println!(
+                log::info!(
                     "2fa code generated: {}, {} seconds left",
                     &otp, raw_otp.secs_left
                 );
             }
         }
         if otp.is_empty() {
-            println!("input your 2fa code:");
+            log::info!("input your 2fa code:");
             otp = utils::read_line().await;
         }
         let mut m = Map::new();
@@ -611,7 +611,7 @@ impl Client {
         let vpn_info = self.list_vpn().await?;
         let mut avalaible = false;
 
-        println!(
+        log::info!(
             "found {} vpn(s), details: {:?}",
             vpn_info.len(),
             vpn_info
@@ -623,7 +623,7 @@ impl Client {
         for vpn in vpn_info {
             if let Some(server_name) = self.conf.vpn_server_name.clone() {
                 if vpn.en_name != server_name {
-                    println!("skip {}, expect {}", vpn.en_name, server_name);
+                    log::info!("skip {}, expect {}", vpn.en_name, server_name);
                     continue;
                 }
             }
@@ -632,31 +632,31 @@ impl Client {
                 2 => "udp",
                 _ => "unknow protocol",
             };
-            println!(
+            log::info!(
                 "check if {} vpn {}:{} is available",
                 mode, &vpn.ip, &vpn.vpn_port
             );
             vpn_addr = format!("{}:{}", &vpn.ip, vpn.vpn_port);
             if self.ping_vpn(vpn.ip, vpn.api_port).await {
-                println!("available");
+                log::info!("available");
                 match mode {
                     "udp" => {
                         avalaible = true;
                         break;
                     }
                     _ => {
-                        println!("we don't support {} wg for now", mode)
+                        log::info!("we don't support {} wg for now", mode)
                     }
                 };
             }
-            println!("not available");
+            log::info!("not available");
         }
         if !avalaible {
             return Err(Error::Error("no vpn available".to_string()));
         }
 
         let key = self.conf.public_key.clone().unwrap();
-        println!("try to get wg conf from remote");
+        log::info!("try to get wg conf from remote");
         let wg_info = self.fetch_peer_info(&key).await?;
         let mtu = wg_info.setting.vpn_mtu;
         let dns = wg_info.setting.vpn_dns;
@@ -666,7 +666,6 @@ impl Client {
         let route = wg_info.setting.vpn_route_split;
 
         // corplink config
-        let protocol_version = wg_info.protocol_version.unwrap_or_default();
         let wg_conf = WgConf {
             address: wg_info.ip,
             mask: wg_info.ip_mask.parse::<u32>().unwrap(),
@@ -677,7 +676,6 @@ impl Client {
             peer_key,
             route,
             dns,
-            protocol_version,
             protocol: 0,
         };
         Ok(wg_conf)
@@ -685,11 +683,11 @@ impl Client {
 
     pub async fn keep_alive_vpn(&mut self, conf: &WgConf, interval: u64) {
         loop {
-            println!("keep alive");
+            log::info!("keep alive");
             match self.report_vpn_status(conf).await {
                 Ok(_) => (),
                 Err(err) => {
-                    println!("keep alive error: {}", err);
+                    log::warn!("keep alive error: {}", err);
                     return;
                 }
             }

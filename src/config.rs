@@ -8,16 +8,18 @@ use crate::utils;
 
 const DEFAULT_DEVICE_NAME: &str = "DollarOS";
 const DEFAULT_INTERFACE_NAME: &str = "corplink";
-pub const DEFAULT_CMD_WG_NAME: &str = "wg-corplink";
 
 pub const PLATFORM_LDAP: &str = "ldap";
 pub const PLATFORM_CORPLINK: &str = "feilian";
 // aka feishu
 pub const PLATFORM_LARK: &str = "lark";
+#[allow(dead_code)]
 pub const PLATFORM_WEIXIN: &str = "weixin";
 // aka dingding
+#[allow(dead_code)]
 pub const PLATFORM_DING_TALK: &str = "dingtalk";
 // unknown
+#[allow(dead_code)]
 pub const PLATFORM_AAD: &str = "aad";
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -33,7 +35,6 @@ pub struct Config {
     pub private_key: Option<String>,
     pub server: Option<String>,
     pub interface_name: Option<String>,
-    pub wg_binary: Option<String>,
     pub debug_wg: Option<bool>,
     #[serde(skip_serializing)]
     pub conf_file: Option<String>,
@@ -63,9 +64,6 @@ impl Config {
             conf.interface_name = Some(DEFAULT_INTERFACE_NAME.to_string());
             update_conf = true;
         }
-        if conf.wg_binary.is_some() {
-            println!("using wg binary {}", conf.wg_binary.clone().unwrap());
-        }
         if conf.device_name.is_none() {
             conf.device_name = Some(DEFAULT_DEVICE_NAME.to_string());
             update_conf = true;
@@ -73,7 +71,7 @@ impl Config {
         if conf.device_id.is_none() {
             conf.device_id = Some(format!(
                 "{:x}",
-                md5::compute(&conf.device_name.clone().unwrap())
+                md5::compute(conf.device_name.clone().unwrap())
             ));
             update_conf = true;
         }
@@ -125,6 +123,5 @@ pub struct WgConf {
     pub dns: String,
 
     // corplink confs
-    pub protocol_version: String,
     pub protocol: i32,
 }

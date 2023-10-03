@@ -1,39 +1,43 @@
 [package]
 name = "corplink-rs"
-version = "0.3.6"
+version = "0.4.0"
 edition = "2021"
 
 [dependencies]
-regex = "1"
+regex = "1.9"
 reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies"] }
 # for debug
 # reqwest = { version = "0.11", features = ["json", "gzip", "deflate", "cookies", "socks"] }
-tokio = { version = "1.22.0", features = ["full"] }
+tokio = { version = "1.32", features = ["full"] }
 futures = "0.3"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-cookie = "0.16"
-cookie_store = "0.19"
-reqwest_cookie_store = "0.5"
+cookie = "0.17"
+cookie_store = "0.20"
+reqwest_cookie_store = "0.6"
 tinytemplate = "1.2"
 md5 = "0.7"
 sha2 = "0.10"
 base32 = "0.4"
-base64 = "0.13"
-rand = "0.7"
-x25519-dalek = "1"
+base64 = "0.21"
+rand = "0.8"
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 httpdate = "1.0"
-chrono = "0.4.23"
-cfg-if = "1.0.0"
+chrono = "0.4"
+cfg-if = "1.0"
 # linux privilege check
-sudo = "0.6.0"
+sudo = "0.6"
 # windows privilege check
-is_elevated = "0.1.2"
+is_elevated = "0.1"
 # windows unix socket
-uds_windows = "1.0.2"
+uds_windows = "1.0"
 
 # string_template = "0.2"
 # dependency for basic-otp
 # basic-otp = "0.1"
 hmac-sha1 = "0.1"
 byteorder = "1.4"
+log = "0.4"
+
+[build-dependencies]
+bindgen = "0.68"

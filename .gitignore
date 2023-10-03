@@ -1,8 +1,19 @@
+# output
 /target/
+
+# JetBrains IDE file
 /.idea/
+
+# pack build output
 /pack/test
+
+# config files
 config.json
 !/config/config.json
 *cookies.json
 *.conf
 !template.json
+
+# libwg
+libwg/libwg.a
+libwg/libwg.h
