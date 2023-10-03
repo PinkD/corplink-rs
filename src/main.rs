@@ -2,7 +2,6 @@ mod api;
 mod client;
 mod config;
 mod resp;
-mod sock;
 mod state;
 mod template;
 mod totp;
