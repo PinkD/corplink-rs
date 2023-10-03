@@ -10,7 +10,10 @@ mod wg;
 
 #[cfg(windows)]
 use is_elevated;
-use std::{env, process::exit};
+
+use std::env;
+use std::process::exit;
+use env_logger::{Builder, Env, Target};
 
 use client::Client;
 use config::{Config, WgConf};
@@ -52,8 +55,11 @@ pub const ETIMEDOUT: i32 = 110;
 
 #[tokio::main]
 async fn main() {
-    print_version();
+    Builder::from_env(Env::default().default_filter_or("info"))
+        .target(Target::Stdout)
+        .init();
 
+    print_version();
     check_previlige();
 
     let conf_file = parse_arg();

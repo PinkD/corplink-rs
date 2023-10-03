@@ -38,6 +38,7 @@ uds_windows = "1.0"
 hmac-sha1 = "0.1"
 byteorder = "1.4"
 log = "0.4"
+env_logger = "0.10"
 
 [build-dependencies]
 bindgen = "0.68"
