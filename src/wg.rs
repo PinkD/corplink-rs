@@ -1,7 +1,6 @@
 use std::io;
 use std::time;
-use std::ffi::CString;
-use std::os::raw::c_char;
+use std::ffi::{c_char, c_void, CStr, CString};
 
 use crate::{config, utils};
 
@@ -26,7 +25,10 @@ unsafe fn to_c_char_array(data: &[u8]) -> *const c_char {
 
 fn uapi(buff: &[u8]) -> Vec<u8> {
     unsafe {
-        CString::from_raw(libwg::uapi(to_c_char_array(buff))).into_bytes()
+        let s = libwg::uapi(to_c_char_array(buff));
+        let result = CStr::from_ptr(s).to_bytes().clone().to_vec();
+        libc::free(s as *mut c_void);
+        result
     }
 }
 

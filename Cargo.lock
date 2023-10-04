@@ -294,6 +294,7 @@ dependencies = [
  "hmac-sha1",
  "httpdate",
  "is_elevated",
+ "libc",
  "log",
  "md5",
  "rand",

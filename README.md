@@ -9,7 +9,7 @@
 下载 [release](https://github.com/PinkD/corplink-rs/releases) 中的安装包，并安装
 
 ```bash
-pacman -U corplink-rs-4.0-1-x86_64.pkg.tar.zst
+pacman -U corplink-rs-4.1-1-x86_64.pkg.tar.zst
 ```
 
 > 欢迎贡献其它包管理器的打包脚本
@@ -181,6 +181,9 @@ graph TD;
 
 # Changelog
 
+- 0.4.1
+  - fix Windows device up
+  - fix undefined behavior for c str
 - 0.4.0
   - embed wg-go with cgo
 - 0.3.6
