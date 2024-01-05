@@ -1,6 +1,6 @@
 #!/bin/bash
 
-git clone --depth=1 https://github.com/PinkD/wireguard-go
+git clone https://github.com/PinkD/wireguard-go
 cd wireguard-go
 make libwg
 mv libwg.* ../

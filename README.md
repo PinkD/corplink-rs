@@ -20,17 +20,15 @@ pacman -U corplink-rs-4.1-1-x86_64.pkg.tar.zst
 ```bash
 git clone https://github.com/PinkD/corplink-rs --depth 1
 cd corplink-rs
+# build libwg
+cd libwg
+./build.sh
+# if you are using Windows, you can clone and build libwg maunally
+# ref: wireguard-go/Makefile:libwg
+
 cargo build --release
 # install corplink-rs to your PATH
 mv target/release/corplink-rs /usr/bin/
-cd ..
-git clone https://github.com/PinkD/wireguard-go --depth 1
-cd wireguard-go
-# you can build with `go build` on windows maunally
-make libwg
-# install wg-corplink to your PATH
-# your can also install it to somewhere else and use wg_binary config to tell corplink-rs where it is
-cp libwg.* ../corplink-rs/libwg/
 ```
 
 # 用法
