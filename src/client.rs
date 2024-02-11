@@ -16,7 +16,7 @@ use serde_json::{json, Map, Value};
 use sha2::Digest;
 
 use crate::api::{ApiName, ApiUrl, URL_GET_COMPANY};
-use crate::config::{Config, WgConf, PLATFORM_CORPLINK, PLATFORM_LARK, PLATFORM_LDAP};
+use crate::config::{Config, WgConf, PLATFORM_CORPLINK, PLATFORM_LARK, PLATFORM_LDAP, PLATFORM_OIDC};
 use crate::resp::*;
 use crate::state::State;
 use crate::totp::{totp_offset, TIME_STEP};
@@ -276,7 +276,7 @@ impl Client {
         log::info!("please visit the following link to auth corplink:\n{url}");
         log::info!("old token is: {token}");
         match method {
-            PLATFORM_LARK => {
+            PLATFORM_LARK | PLATFORM_OIDC => {
                 log::info!("press enter if you finish auth");
                 let stdin = io::stdin();
                 stdin.lines().next();
