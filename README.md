@@ -179,6 +179,8 @@ graph TD;
 
 # Changelog
 
+- 0.4.2
+  - add OIDC platform support(by @Jinxuyang)
 - 0.4.1
   - fix Windows device up
   - fix undefined behavior for c str
