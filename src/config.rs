@@ -11,6 +11,7 @@ const DEFAULT_INTERFACE_NAME: &str = "corplink";
 
 pub const PLATFORM_LDAP: &str = "ldap";
 pub const PLATFORM_CORPLINK: &str = "feilian";
+pub const PLATFORM_OIDC: &str = "OIDC";
 // aka feishu
 pub const PLATFORM_LARK: &str = "lark";
 #[allow(dead_code)]

@@ -88,7 +88,7 @@ macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需�
   "username": "your_name",
   // support sha256sum hashed pass if you don't use ldap, will ask email for code if not provided
   "password": "your_pass",
-  // default is feilian, can be feilian/ldap/lark(aka feishu)
+  // default is feilian, can be feilian/ldap/lark(aka feishu)/OIDC
   // dingtalk/aad/weixin is not supported yet
   "platform": "ldap",
   "code": "totp code",
