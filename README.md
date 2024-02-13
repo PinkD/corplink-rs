@@ -104,7 +104,11 @@ macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需�
   "interface_name": "corplink",
   // will use the specified server to connect, for example 'HK-1'
   // name from server list
-  "vpn_server_name": "hk"
+  "vpn_server_name": "hk",
+  // latency/default
+  // latency: choose the server with the lowest latency
+  // default: choose the first available server
+  "vpn_select_strategy": "latency"
 }
 ```
 
