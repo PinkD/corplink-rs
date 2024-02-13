@@ -23,6 +23,9 @@ pub const PLATFORM_DING_TALK: &str = "dingtalk";
 #[allow(dead_code)]
 pub const PLATFORM_AAD: &str = "aad";
 
+pub const STRATEGY_LATENCY: &str = "latency";
+pub const STRATEGY_DEFAULT: &str = "default";
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub company_name: String,
@@ -41,6 +44,7 @@ pub struct Config {
     pub conf_file: Option<String>,
     pub state: Option<State>,
     pub vpn_server_name: Option<String>,
+    pub vpn_select_strategy: Option<String>
 }
 
 impl fmt::Display for Config {
