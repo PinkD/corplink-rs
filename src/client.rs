@@ -705,6 +705,19 @@ impl Client {
         let private_key = self.conf.private_key.clone().unwrap();
         let route = wg_info.setting.vpn_route_split;
 
+        // fix CIDR format
+        let suffix_regex = regex::Regex::new(r"/[0-9]+$").unwrap(); 
+        let route: Vec<String> = route
+            .iter()
+            .map(|r| {
+                if suffix_regex.is_match(&r) {
+                    r.to_string()
+                } else {
+                    format!("{}/32", r)
+                }
+            })
+            .collect();
+
         // corplink config
         let wg_conf = WgConf {
             address: wg_info.ip,
