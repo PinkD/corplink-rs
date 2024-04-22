@@ -147,7 +147,7 @@ impl Client {
             .user_agent(USER_AGENT)
             .cookie_provider(Arc::clone(&cookie_store))
             .default_headers(headers)
-            .timeout(Duration::from_millis(2000))
+            .timeout(Duration::from_millis(10000))
             .build();
         if let Err(err) = c {
             return Err(Error::ReqwestError(err));
