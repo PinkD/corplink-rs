@@ -1,3 +1,4 @@
+use chrono::Utc;
 use std::collections::HashMap;
 use std::fmt;
 use std::path;
@@ -5,7 +6,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
-use chrono::Utc;
 
 use cookie::Cookie as RawCookie;
 use cookie_store::{Cookie, CookieStore};
@@ -17,7 +17,10 @@ use serde_json::{json, Map, Value};
 use sha2::Digest;
 
 use crate::api::{ApiName, ApiUrl, URL_GET_COMPANY};
-use crate::config::{Config, WgConf, PLATFORM_CORPLINK, PLATFORM_LARK, PLATFORM_LDAP, PLATFORM_OIDC, STRATEGY_LATENCY, STRATEGY_DEFAULT};
+use crate::config::{
+    Config, WgConf, PLATFORM_CORPLINK, PLATFORM_LARK, PLATFORM_LDAP, PLATFORM_OIDC,
+    STRATEGY_DEFAULT, STRATEGY_LATENCY,
+};
 use crate::resp::*;
 use crate::state::State;
 use crate::totp::{totp_offset, TIME_STEP};
@@ -342,6 +345,34 @@ impl Client {
         true
     }
 
+    async fn request_otp_code(&mut self) -> Result<String, Error> {
+        let m = Map::new();
+        let resp = self.request::<RespOtp>(ApiName::OTP, Some(m)).await?;
+        match resp.code {
+            0 => Ok(resp.data.unwrap().url),
+            _ => {
+                let msg = resp.message.unwrap();
+                Err(Error::Error(msg))
+            }
+        }
+    }
+
+    async fn get_otp_uri_by_otp(
+        &mut self,
+        tps_login: &HashMap<String, RespTpsLoginMethod>,
+        method: &String,
+    ) -> Result<String, Error> {
+        return match self.get_otp_uri(tps_login, method).await {
+            Ok(url) => {
+                if url == "" {
+                    self.request_otp_code().await
+                } else {
+                    Ok(url)
+                }
+            }
+            Err(e) => Err(e),
+        };
+    }
     async fn get_otp_uri(
         &mut self,
         tps_login: &HashMap<String, RespTpsLoginMethod>,
@@ -381,7 +412,7 @@ impl Client {
             tps_login.insert(resp.alias.clone(), resp);
         }
         for method in resp.login_orders {
-            let otp_uri = self.get_otp_uri(&tps_login, &method).await;
+            let otp_uri = self.get_otp_uri_by_otp(&tps_login, &method).await;
             if let Err(e) = otp_uri {
                 log::warn!("failed to login with method {method}: {e}");
                 continue;
@@ -531,16 +562,23 @@ impl Client {
         }
     }
 
-    async fn get_first_vpn_by_latency(&mut self, vpn_info: Vec<RespVpnInfo>) -> Option<RespVpnInfo> {
+    async fn get_first_vpn_by_latency(
+        &mut self,
+        vpn_info: Vec<RespVpnInfo>,
+    ) -> Option<RespVpnInfo> {
         let mut fast_vpn = None;
         let mut min_latency = i64::MAX;
         for vpn in vpn_info {
             let latency = self.ping_vpn(vpn.ip.clone(), vpn.api_port).await;
 
-            log::info!("server name {}{}", vpn.en_name, match latency {
+            log::info!(
+                "server name {}{}",
+                vpn.en_name,
+                match latency {
                     -1 => " timeout".to_string(),
-                    _ => format!(", latency {}ms", latency)
-                });
+                    _ => format!(", latency {}ms", latency),
+                }
+            );
             if latency != -1 && latency < min_latency {
                 fast_vpn = Some(vpn);
                 min_latency = latency;
@@ -553,7 +591,7 @@ impl Client {
         for vpn in vpn_info {
             let latency = self.ping_vpn(vpn.ip.clone(), vpn.api_port.clone()).await;
             if latency != -1 {
-                return Some(vpn)
+                return Some(vpn);
             }
         }
         None
@@ -616,7 +654,8 @@ impl Client {
                 otp = format!("{:06}", raw_otp.code);
                 log::info!(
                     "2fa code generated: {}, {} seconds left",
-                    &otp, raw_otp.secs_left
+                    &otp,
+                    raw_otp.secs_left
                 );
             }
         }
@@ -652,12 +691,13 @@ impl Client {
                 .map(|i| i.en_name.clone())
                 .collect::<Vec<String>>()
         );
-        let filtered_vpn = vpn_info.into_iter()
+        let filtered_vpn = vpn_info
+            .into_iter()
             .filter(|vpn| {
                 if let Some(server_name) = self.conf.vpn_server_name.clone() {
                     if vpn.en_name != server_name {
                         log::info!("skip {}, expect {}", vpn.en_name, server_name);
-                        return false
+                        return false;
                     }
                 }
                 true
@@ -671,7 +711,11 @@ impl Client {
                 match mode {
                     "udp" => true,
                     _ => {
-                        log::info!("server name {} is not support {} wg for now", vpn.en_name, mode);
+                        log::info!(
+                            "server name {} is not support {} wg for now",
+                            vpn.en_name,
+                            mode
+                        );
                         false
                     }
                 }
@@ -679,21 +723,23 @@ impl Client {
             .collect();
 
         let vpn = match self.conf.vpn_select_strategy.clone() {
-            Some(strategy) => {
-                match strategy.as_str() {
-                    STRATEGY_LATENCY => self.get_first_vpn_by_latency(filtered_vpn).await,
-                    STRATEGY_DEFAULT => self.get_first_available_vpn(filtered_vpn).await,
-                    _ => return Err(Error::Error("unsupported strategy".to_string()))
-                }
-            }
-            None => self.get_first_available_vpn(filtered_vpn).await
+            Some(strategy) => match strategy.as_str() {
+                STRATEGY_LATENCY => self.get_first_vpn_by_latency(filtered_vpn).await,
+                STRATEGY_DEFAULT => self.get_first_available_vpn(filtered_vpn).await,
+                _ => return Err(Error::Error("unsupported strategy".to_string())),
+            },
+            None => self.get_first_available_vpn(filtered_vpn).await,
         };
 
         let vpn_addr = match vpn {
             Some(ref vpn) => format!("{}:{}", vpn.ip, vpn.vpn_port),
-            None => return Err(Error::Error("no vpn available".to_string()))
+            None => return Err(Error::Error("no vpn available".to_string())),
         };
-        log::info!("try connect to {}, address {}", vpn.unwrap().en_name, vpn_addr);
+        log::info!(
+            "try connect to {}, address {}",
+            vpn.unwrap().en_name,
+            vpn_addr
+        );
 
         let key = self.conf.public_key.clone().unwrap();
         log::info!("try to get wg conf from remote");

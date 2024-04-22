@@ -44,7 +44,14 @@ pub struct RespCorplinkLoginMethod {
 
 #[derive(serde::Deserialize)]
 pub struct RespLogin {
+    #[serde(default)]
     pub url: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RespOtp {
+    pub url: String,
+    pub code: String,
 }
 
 #[derive(serde::Deserialize)]
