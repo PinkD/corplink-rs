@@ -26,7 +26,7 @@ unsafe fn to_c_char_array(data: &[u8]) -> *const c_char {
 fn uapi(buff: &[u8]) -> Vec<u8> {
     unsafe {
         let s = libwg::uapi(to_c_char_array(buff));
-        let result = CStr::from_ptr(s).to_bytes().clone().to_vec();
+        let result = CStr::from_ptr(s).to_bytes().to_vec();
         libc::free(s as *mut c_void);
         result
     }

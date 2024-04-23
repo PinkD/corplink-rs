@@ -183,6 +183,8 @@ graph TD;
 
 # Changelog
 
+- 0.4.3
+  - support corplink 2.2.x(by @jixiuf)
 - 0.4.2
   - add OIDC platform support(by @Jinxuyang)
 - 0.4.1
@@ -244,7 +246,7 @@ graph TD;
 # License
 
 ```license
- Copyright (C) 2023  PinkD, ShuNing, LionheartLann, XYenon
+ Copyright (C) 2023  PinkD, ShuNing, LionheartLann, XYenon, Verge, jixiuf
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
