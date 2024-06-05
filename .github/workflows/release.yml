@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: build package
         id: build_package
         uses: PinkD/arch-pkgbuild-builder@v2.3
@@ -38,7 +38,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+      - name: setup go
+        uses: actions/setup-go@v5
       - name: build libwg
         run: cd libwg && ./build.sh
       - name: build package
