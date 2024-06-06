@@ -18,8 +18,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-arch-linux:
-    name: build-arch-linux
+  build-archlinux:
+    name: build-archlinux
     needs: ['create-release']
     runs-on: ubuntu-latest
     steps:
