@@ -16,6 +16,7 @@ pacman -U corplink-rs-4.1-1-x86_64.pkg.tar.zst
 
 ## 手动编译
 
+### linux/macos
 
 ```bash
 git clone https://github.com/PinkD/corplink-rs --depth 1
@@ -30,6 +31,10 @@ cargo build --release
 # install corplink-rs to your PATH
 mv target/release/corplink-rs /usr/bin/
 ```
+
+### windows
+
+参考 [#34](https://github.com/PinkD/corplink-rs/issues/34)
 
 # 用法
 
