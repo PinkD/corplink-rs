@@ -3,18 +3,16 @@ use terminal_graphics::Colour;
 use terminal_graphics::Display;
 
 #[derive(Clone)]
-pub struct TermQrCode {
+pub struct TerminalQrCode {
     code: QrCode,
 }
 
-impl TermQrCode {
-    // Generate a TermQrCode from Bytes.
-    pub fn from_bytes<D: AsRef<[u8]>>(data: D) -> TermQrCode {
+impl TerminalQrCode {
+    pub fn from_bytes<D: AsRef<[u8]>>(data: D) -> TerminalQrCode {
         let code = QrCode::with_version(data, Version::Normal(20), EcLevel::L).unwrap();
-        TermQrCode { code }
+        TerminalQrCode { code }
     }
 
-    // Print the QR code in the terminal.
     pub fn print(&self) {
         let code = self.code.clone();
         let width = code.width();

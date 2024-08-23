@@ -21,7 +21,7 @@ use crate::config::{
     Config, WgConf, PLATFORM_CORPLINK, PLATFORM_LARK, PLATFORM_LDAP, PLATFORM_OIDC,
     STRATEGY_DEFAULT, STRATEGY_LATENCY,
 };
-use crate::qrcode::TermQrCode;
+use crate::qrcode::TerminalQrCode;
 use crate::resp::*;
 use crate::state::State;
 use crate::totp::{totp_offset, TIME_STEP};
@@ -279,11 +279,10 @@ impl Client {
         url: &String,
         token: &String,
     ) -> Result<String, Error> {
-        let code = TermQrCode::from_bytes(url.as_bytes());
-        code.print();
-        // log::info!("please scan the QR code or visit the following link to auth corplink:\n{url}");
-        log::info!("please scan the QR code above");
         log::info!("old token is: {token}");
+        log::info!("please scan the QR code or visit the following link to auth corplink:\n{url}");
+        let code = TerminalQrCode::from_bytes(url.as_bytes());
+        code.print();
         match method {
             PLATFORM_LARK | PLATFORM_OIDC => {
                 log::info!("press enter if you finish auth");
