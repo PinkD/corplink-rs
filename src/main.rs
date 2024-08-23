@@ -1,6 +1,7 @@
 mod api;
 mod client;
 mod config;
+mod qrcode;
 mod resp;
 mod state;
 mod template;
@@ -11,9 +12,9 @@ mod wg;
 #[cfg(windows)]
 use is_elevated;
 
+use env_logger::{Builder, Env, Target};
 use std::env;
 use std::process::exit;
-use env_logger::{Builder, Env, Target};
 
 use client::Client;
 use config::{Config, WgConf};
@@ -72,7 +73,9 @@ async fn main() {
             Ok(resp) => {
                 log::info!(
                     "company name is {}(zh)/{}(en) server is {}",
-                    resp.zh_name, resp.en_name, resp.domain
+                    resp.zh_name,
+                    resp.en_name,
+                    resp.domain
                 );
                 conf.server = Some(resp.domain);
                 conf.save().await;
@@ -80,7 +83,8 @@ async fn main() {
             Err(err) => {
                 log::error!(
                     "failed to fetch company server from company name {}: {}",
-                    conf.company_name, err
+                    conf.company_name,
+                    err
                 );
                 exit(EPERM);
             }
