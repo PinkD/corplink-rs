@@ -1,11 +1,16 @@
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::io;
 use std::time;
-use std::ffi::{c_char, c_void, CStr, CString};
 
 use crate::{config, utils};
 
 #[allow(clippy::all)]
-#[allow(dead_code, non_camel_case_types, non_snake_case, non_upper_case_globals)]
+#[allow(
+    dead_code,
+    non_camel_case_types,
+    non_snake_case,
+    non_upper_case_globals
+)]
 mod libwg {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
@@ -16,7 +21,9 @@ fn start_wg(log_level: i32, interface_name: &str) -> i32 {
 }
 
 fn stop_wg() {
-    unsafe { libwg::stopWg(); }
+    unsafe {
+        libwg::stopWg();
+    }
 }
 
 unsafe fn to_c_char_array(data: &[u8]) -> *const c_char {
@@ -32,16 +39,11 @@ fn uapi(buff: &[u8]) -> Vec<u8> {
     }
 }
 
-
 pub fn stop_wg_go() {
     stop_wg();
 }
 
-pub fn start_wg_go(
-    name: &str,
-    protocol: i32,
-    with_log: bool,
-) -> bool {
+pub fn start_wg_go(name: &str, protocol: i32, with_log: bool) -> bool {
     // TODO: support tcp tun
     _ = protocol;
     log::info!("start wg-corplink");
@@ -71,7 +73,11 @@ impl UAPIClient {
         buff.push_str(format!("endpoint={}\n", conf.peer_address).as_str());
         buff.push_str("persistent_keepalive_interval=10\n".to_string().as_str());
         for route in &conf.route {
-            buff.push_str(format!("allowed_ip={route}\n").as_str());
+            if route.contains("/") {
+                buff.push_str(format!("allowed_ip={route}\n").as_str());
+            } else {
+                buff.push_str(format!("allowed_ip={route}/32\n").as_str());
+            }
         }
 
         // wg-corplink uapi operations
@@ -81,7 +87,11 @@ impl UAPIClient {
         buff.push_str(format!("mtu={mtu}\n").as_str());
         buff.push_str("up=true\n".to_string().as_str());
         for route in &conf.route {
-            buff.push_str(format!("route={route}\n").as_str());
+            if route.contains("/") {
+                buff.push_str(format!("route={route}\n").as_str());
+            } else {
+                buff.push_str(format!("route={route}/32\n").as_str());
+            }
         }
         // end operation
 
@@ -119,18 +129,15 @@ impl UAPIClient {
                             if timestamp == 0 {
                                 // do nothing because it's invalid
                             } else {
-                                let nt =
-                                    chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0)
-                                        .unwrap();
+                                let nt = chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0)
+                                    .unwrap();
                                 let now = chrono::Utc::now().naive_utc();
                                 let t = now - nt;
                                 let tt: chrono::DateTime<chrono::Utc> =
                                     chrono::DateTime::from_utc(nt, chrono::Utc);
                                 let lt = tt.with_timezone(&chrono::Local);
                                 let elapsed = t.to_std().unwrap().as_secs_f32();
-                                log::info!(
-                                    "last handshake is at {lt}, elapsed time {elapsed}s"
-                                );
+                                log::info!("last handshake is at {lt}, elapsed time {elapsed}s");
                                 if t > chrono::Duration::from_std(interval).unwrap() {
                                     log::warn!(
                                         "last handshake is at {}, elapsed time {}s more than {}s",
@@ -159,4 +166,3 @@ impl UAPIClient {
         }
     }
 }
-
