@@ -188,6 +188,10 @@ graph TD;
 
 # Changelog
 
+- 0.4.4
+  - add macos release(by @overvenus)
+  - fix single ip route(by @simpleapples)
+  - add qr code suuport for feishu login(@simpleapples)
 - 0.4.3
   - support corplink 2.2.x(by @jixiuf)
 - 0.4.2
