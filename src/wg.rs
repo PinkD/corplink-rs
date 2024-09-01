@@ -15,9 +15,9 @@ mod libwg {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-fn start_wg(log_level: i32, interface_name: &str) -> i32 {
+fn start_wg(log_level: i32, protocol: i32, interface_name: &str) -> i32 {
     let name = interface_name.as_bytes();
-    unsafe { libwg::startWg(log_level, to_c_char_array(name)) }
+    unsafe { libwg::startWg(log_level, protocol, to_c_char_array(name)) }
 }
 
 fn stop_wg() {
@@ -44,14 +44,12 @@ pub fn stop_wg_go() {
 }
 
 pub fn start_wg_go(name: &str, protocol: i32, with_log: bool) -> bool {
-    // TODO: support tcp tun
-    _ = protocol;
     log::info!("start wg-corplink");
     let mut log_level = libwg::LogLevelError;
     if with_log {
         log_level = libwg::LogLevelVerbose;
     }
-    let ret = start_wg(log_level, name);
+    let ret = start_wg(log_level, protocol, name);
     matches!(ret, 0)
 }
 
@@ -129,12 +127,10 @@ impl UAPIClient {
                             if timestamp == 0 {
                                 // do nothing because it's invalid
                             } else {
-                                let nt = chrono::NaiveDateTime::from_timestamp_opt(timestamp, 0)
-                                    .unwrap();
-                                let now = chrono::Utc::now().naive_utc();
+                                let nt = chrono::DateTime::from_timestamp(timestamp, 0).unwrap();
+                                let now = chrono::Utc::now().to_utc();
                                 let t = now - nt;
-                                let tt: chrono::DateTime<chrono::Utc> =
-                                    chrono::DateTime::from_utc(nt, chrono::Utc);
+                                let tt = nt.to_utc();
                                 let lt = tt.with_timezone(&chrono::Local);
                                 let elapsed = t.to_std().unwrap().as_secs_f32();
                                 log::info!("last handshake is at {lt}, elapsed time {elapsed}s");

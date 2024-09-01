@@ -188,7 +188,7 @@ impl Client {
         c.save_json(&mut file).unwrap();
     }
 
-    async fn request<T: DeserializeOwned>(
+    async fn request<T: DeserializeOwned+fmt::Debug>(
         &mut self,
         api: ApiName,
         body: Option<Map<String, Value>>,
@@ -226,7 +226,9 @@ impl Client {
         if let Err(err) = resp {
             return Err(Error::ReqwestError(err));
         }
-        Ok(resp.unwrap())
+        let resp = resp.unwrap();
+        log::debug!("api {:#?} resp: {:#?}", api, resp);
+        Ok(resp)
     }
 
     fn parse_time_offset_from_date_header(&mut self, resp: &Response) {
@@ -713,6 +715,7 @@ impl Client {
                 };
                 match mode {
                     "udp" => true,
+                    "tcp" => true,
                     _ => {
                         log::info!(
                             "server name {} is not support {} wg for now",
@@ -734,13 +737,14 @@ impl Client {
             None => self.get_first_available_vpn(filtered_vpn).await,
         };
 
-        let vpn_addr = match vpn {
-            Some(ref vpn) => format!("{}:{}", vpn.ip, vpn.vpn_port),
+        let vpn = match vpn {
+            Some(ref vpn) => vpn,
             None => return Err(Error::Error("no vpn available".to_string())),
         };
+        let vpn_addr = format!("{}:{}", vpn.ip, vpn.vpn_port);
         log::info!(
             "try connect to {}, address {}",
-            vpn.unwrap().en_name,
+            vpn.en_name,
             vpn_addr
         );
 
@@ -765,7 +769,12 @@ impl Client {
             peer_key,
             route,
             dns,
-            protocol: 0,
+            protocol: match vpn.protocol_mode {
+                // tcp
+                1 => 1,
+                // udp
+                _ => 0,
+            },
         };
         Ok(wg_conf)
     }

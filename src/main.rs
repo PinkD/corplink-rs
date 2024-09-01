@@ -12,7 +12,7 @@ mod wg;
 #[cfg(windows)]
 use is_elevated;
 
-use env_logger::{Builder, Env, Target};
+use env_logger;
 use std::env;
 use std::process::exit;
 
@@ -56,9 +56,9 @@ pub const ETIMEDOUT: i32 = 110;
 
 #[tokio::main]
 async fn main() {
-    Builder::from_env(Env::default().default_filter_or("info"))
-        .target(Target::Stdout)
-        .init();
+    // NOTE: If you want to debug, you should set `RUST_LOG` env to `debug` and run corplink-rs in root
+    //  because `check_previlige` will call sudo and drop env if you're not root
+    env_logger::init();
 
     print_version();
     check_previlige();
