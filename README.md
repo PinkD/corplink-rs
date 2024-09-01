@@ -179,7 +179,7 @@ graph TD;
 # TODO
 
 - [ ] 使用 [Tauri][7] 实现界面(~~或许大概可能永远不会有~~)
-- [ ] 实现 TCP 版的 wg 协议
+- [x] 实现 TCP 版的 wg 协议
 - [x] 为不同配置生成不同的 `cookies.json`
 - [x] windows/mac 实现
 - [x] 自动使用从服务器返回的请求中的时间戳同步时间
@@ -188,6 +188,8 @@ graph TD;
 
 # Changelog
 
+- 0.5.0
+  - add tcp support for wg-go
 - 0.4.4
   - add macos release(by @overvenus)
   - fix single ip route(by @simpleapples)
