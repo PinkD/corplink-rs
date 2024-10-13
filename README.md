@@ -114,7 +114,10 @@ macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需�
   // latency/default
   // latency: choose the server with the lowest latency
   // default: choose the first available server
-  "vpn_select_strategy": "latency"
+  "vpn_select_strategy": "latency",
+  // use vpn dns for macos
+  // NOTE: if process doesn't exit gracefully, your dns may not be restored
+  "use_vpn_dns": false
 }
 ```
 
@@ -189,6 +192,9 @@ graph TD;
 
 # Changelog
 
+- 0.5.1
+  - support using dns from server for macos(@fanwenlin)
+  - fix high cpu usage
 - 0.5.0
   - add tcp support for wg-go
 - 0.4.4

@@ -70,6 +70,8 @@ async fn main() {
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
     let name = conf.interface_name.clone().unwrap();
+
+    #[cfg(target_os = "macos")]
     let use_vpn_dns = conf.use_vpn_dns.unwrap_or(false);
 
     match conf.server {
