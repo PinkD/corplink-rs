@@ -1,6 +1,7 @@
 mod api;
 mod client;
 mod config;
+mod dns;
 mod qrcode;
 mod resp;
 mod state;
@@ -11,6 +12,9 @@ mod wg;
 
 #[cfg(windows)]
 use is_elevated;
+
+#[cfg(target_os = "macos")]
+use dns::DNSManager;
 
 use env_logger;
 use std::env;
@@ -66,6 +70,7 @@ async fn main() {
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
     let name = conf.interface_name.clone().unwrap();
+    let use_vpn_dns = conf.use_vpn_dns.unwrap_or(false);
 
     match conf.server {
         Some(_) => {}
@@ -136,6 +141,19 @@ async fn main() {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    let mut dns_manager = DNSManager::new();
+
+    #[cfg(target_os = "macos")]
+    if use_vpn_dns {
+        match dns_manager.set_dns(vec![&wg_conf.dns], vec![]) {
+            Ok(_) => {}
+            Err(err) => {
+                log::warn!("failed to set dns: {}", err);
+            }
+        }
+    }
+
     let mut exit_code = 0;
     tokio::select! {
         // handle signal
@@ -171,6 +189,16 @@ async fn main() {
     };
 
     wg::stop_wg_go();
+
+    #[cfg(target_os = "macos")]
+    if use_vpn_dns {
+        match dns_manager.restore_dns() {
+            Ok(_) => {}
+            Err(err) => {
+                log::warn!("failed to delete dns: {}", err);
+            }
+        }
+    }
 
     log::info!("reach exit");
     exit(exit_code)
