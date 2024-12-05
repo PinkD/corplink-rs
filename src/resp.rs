@@ -74,7 +74,7 @@ pub struct RespWgExtraInfo {
     pub vpn_mtu: u32,
     pub vpn_dns: String,
     pub vpn_dns_backup: String,
-    pub vpn_dns_domain_split: Vec<String>,
+    pub vpn_dns_domain_split: Option<Vec<String>>,
     pub vpn_route_full: Vec<String>,
     pub vpn_route_split: Vec<String>,
 }
