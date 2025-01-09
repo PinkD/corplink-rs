@@ -117,7 +117,7 @@ impl Config {
 pub struct WgConf {
     // standard wg conf
     pub address: String,
-    pub mask: u32,
+    pub address6: String,
     pub peer_address: String,
     pub mtu: u32,
     pub public_key: String,
