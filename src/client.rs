@@ -188,7 +188,7 @@ impl Client {
         c.save_json(&mut file).unwrap();
     }
 
-    async fn request<T: DeserializeOwned+fmt::Debug>(
+    async fn request<T: DeserializeOwned + fmt::Debug>(
         &mut self,
         api: ApiName,
         body: Option<Map<String, Value>>,
@@ -742,11 +742,7 @@ impl Client {
             None => return Err(Error::Error("no vpn available".to_string())),
         };
         let vpn_addr = format!("{}:{}", vpn.ip, vpn.vpn_port);
-        log::info!(
-            "try connect to {}, address {}",
-            vpn.en_name,
-            vpn_addr
-        );
+        log::info!("try connect to {}, address {}", vpn.en_name, vpn_addr);
 
         let key = self.conf.public_key.clone().unwrap();
         log::info!("try to get wg conf from remote");
@@ -756,12 +752,16 @@ impl Client {
         let peer_key = wg_info.public_key;
         let public_key = self.conf.public_key.clone().unwrap();
         let private_key = self.conf.private_key.clone().unwrap();
-        let route = wg_info.setting.vpn_route_split;
+        let address = format!("{}/{}", wg_info.ip, wg_info.ip_mask.parse::<u32>().unwrap());
+        let address6 = (!wg_info.ipv6.is_empty())
+            .then_some(format!("{}/128", wg_info.ipv6))
+            .unwrap_or("".into());
+        let route = [wg_info.setting.vpn_route_split, wg_info.setting.v6_route_split].concat();
 
         // corplink config
         let wg_conf = WgConf {
-            address: wg_info.ip,
-            mask: wg_info.ip_mask.parse::<u32>().unwrap(),
+            address,
+            address6,
             peer_address: vpn_addr,
             mtu,
             public_key,

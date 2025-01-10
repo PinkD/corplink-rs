@@ -79,16 +79,21 @@ impl UAPIClient {
         }
 
         // wg-corplink uapi operations
-        let addr = format!("{}/{}", conf.address, conf.mask);
+        let addr = &conf.address;
+        let addr6 = &conf.address6;
         let mtu = conf.mtu;
         buff.push_str(format!("address={addr}\n").as_str());
+        if !addr6.is_empty() {
+            buff.push_str(format!("address={addr6}\n").as_str());
+        }
         buff.push_str(format!("mtu={mtu}\n").as_str());
         buff.push_str("up=true\n".to_string().as_str());
         for route in &conf.route {
             if route.contains("/") {
                 buff.push_str(format!("route={route}\n").as_str());
             } else {
-                buff.push_str(format!("route={route}/32\n").as_str());
+                let prefix_len = route.contains(":").then_some(128).unwrap_or(32);
+                buff.push_str(format!("route={route}/{prefix_len}\n").as_str());
             }
         }
         // end operation
