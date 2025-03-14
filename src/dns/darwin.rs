@@ -1,20 +1,78 @@
 use std::collections::HashMap;
 use std::io::Error;
 use std::process::Command;
+use super::DNSManagerTrait;
 
 pub struct DNSManager {
     service_dns: HashMap<String, String>,
     service_dns_search: HashMap<String, String>,
 }
 
-impl DNSManager {
-    pub fn new() -> DNSManager {
+impl DNSManagerTrait for DNSManager {
+    fn new() -> DNSManager {
         DNSManager {
             service_dns: HashMap::new(),
             service_dns_search: HashMap::new(),
         }
     }
 
+    fn set_dns(&mut self, dns_servers: Vec<&str>, dns_search: Vec<&str>) -> Result<(), Error> {
+        if dns_servers.is_empty() {
+            return Ok(());
+        }
+        match self.collect_new_service_dns() {
+            Err(e) => return Err(e),
+            _ => {}
+        }
+
+        for service in self.service_dns.keys() {
+            Command::new("networksetup")
+                .arg("-setdnsservers")
+                .arg(service)
+                .args(&dns_servers)
+                .status()?;
+
+            if !dns_search.is_empty() {
+                Command::new("networksetup")
+                    .arg("-setsearchdomains")
+                    .arg(service)
+                    .args(&dns_search)
+                    .status()?;
+            }
+            log::debug!("DNS seted for {} with {}", service, dns_servers.join(","));
+        }
+
+        Ok(())
+    }
+
+    fn restore_dns(&self) -> Result<(), Error> {
+        for (service, dns) in &self.service_dns {
+            Command::new("networksetup")
+                .arg("-setdnsservers")
+                .arg(service)
+                .args(dns.lines())
+                .status()?;
+
+            log::debug!("DNS server reseted for {} with {}", service, dns);
+        }
+        for (service, search_domain) in &self.service_dns_search {
+            Command::new("networksetup")
+                .arg("-setsearchdomains")
+                .arg(service)
+                .args(search_domain.lines())
+                .status()?;
+            log::debug!(
+                "DNS search domain reseted for {} with {}",
+                service,
+                search_domain
+            )
+        }
+        log::debug!("DNS reseted");
+        Ok(())
+    }
+}
+
+impl DNSManager {
     fn collect_new_service_dns(&mut self) -> Result<(), Error> {
         let output = Command::new("networksetup")
             .arg("-listallnetworkservices")
@@ -75,58 +133,4 @@ impl DNSManager {
         }
         Ok(())
     }
-
-    pub fn set_dns(&mut self, dns_servers: Vec<&str>, dns_search: Vec<&str>) -> Result<(), Error> {
-        if dns_servers.is_empty() {
-            return Ok(());
-        }
-        match self.collect_new_service_dns() {
-            Err(e) => return Err(e),
-            _ => {}
-        }
-        for service in self.service_dns.keys() {
-            Command::new("networksetup")
-                .arg("-setdnsservers")
-                .arg(service)
-                .args(&dns_servers)
-                .status()?;
-
-            if !dns_search.is_empty() {
-                Command::new("networksetup")
-                    .arg("-setsearchdomains")
-                    .arg(service)
-                    .args(&dns_search)
-                    .status()?;
-            }
-            log::debug!("DNS seted for {} with {}", service, dns_servers.join(","));
-        }
-
-        Ok(())
-    }
-
-    pub fn restore_dns(&self) -> Result<(), Error> {
-        for (service, dns) in &self.service_dns {
-            Command::new("networksetup")
-                .arg("-setdnsservers")
-                .arg(service)
-                .args(dns.lines())
-                .status()?;
-
-            log::debug!("DNS server reseted for {} with {}", service, dns);
-        }
-        for (service, search_domain) in &self.service_dns_search {
-            Command::new("networksetup")
-                .arg("-setsearchdomains")
-                .arg(service)
-                .args(search_domain.lines())
-                .status()?;
-            log::debug!(
-                "DNS search domain reseted for {} with {}",
-                service,
-                search_domain
-            )
-        }
-        log::debug!("DNS reseted");
-        Ok(())
-    }
-}
+} 
