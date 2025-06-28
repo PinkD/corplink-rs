@@ -39,7 +39,7 @@ impl DNSManager {
                 .trim()
                 .to_string();
             // if dns config for this service is not empty, output should be ip addresses seperated in lines without space
-            // otherwise, output should be "There aren't any DNS Servers set on xxx", use "Empty" instead, which can be recongnized in 'networksetup -setdnsservers'
+            // otherwise, output should be "There aren't any DNS Servers set on xxx", use "Empty" instead, which can be recognized in 'networksetup -setdnsservers'
             let dns_response = if dns_response.contains(" ") {
                 "Empty".to_string()
             } else {
@@ -67,7 +67,7 @@ impl DNSManager {
                 .insert(service.to_string(), search_response.clone());
 
             log::debug!(
-                "DNS collected for {}, dnsservers: {}, search domain: {}",
+                "DNS collected for {}, dns servers: {}, search domain: {}",
                 service,
                 dns_response,
                 search_response
@@ -98,7 +98,7 @@ impl DNSManager {
                     .args(&dns_search)
                     .status()?;
             }
-            log::debug!("DNS seted for {} with {}", service, dns_servers.join(","));
+            log::debug!("DNS set for {} with {}", service, dns_servers.join(","));
         }
 
         Ok(())
@@ -112,7 +112,7 @@ impl DNSManager {
                 .args(dns.lines())
                 .status()?;
 
-            log::debug!("DNS server reseted for {} with {}", service, dns);
+            log::debug!("DNS server reset for {} with {}", service, dns);
         }
         for (service, search_domain) in &self.service_dns_search {
             Command::new("networksetup")
@@ -121,12 +121,12 @@ impl DNSManager {
                 .args(search_domain.lines())
                 .status()?;
             log::debug!(
-                "DNS search domain reseted for {} with {}",
+                "DNS search domain reset for {} with {}",
                 service,
                 search_domain
             )
         }
-        log::debug!("DNS reseted");
+        log::debug!("DNS reset");
         Ok(())
     }
 }

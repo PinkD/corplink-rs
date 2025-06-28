@@ -61,11 +61,11 @@ pub const ETIMEDOUT: i32 = 110;
 #[tokio::main]
 async fn main() {
     // NOTE: If you want to debug, you should set `RUST_LOG` env to `debug` and run corplink-rs in root
-    //  because `check_previlige` will call sudo and drop env if you're not root
+    //  because `check_privilege` will call sudo and drop env if you're not root
     env_logger::init();
 
     print_version();
-    check_previlige();
+    check_privilege();
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file).await;
@@ -206,7 +206,7 @@ async fn main() {
     exit(exit_code)
 }
 
-fn check_previlige() {
+fn check_privilege() {
     #[cfg(unix)]
     match sudo::escalate_if_needed() {
         Ok(_) => {}

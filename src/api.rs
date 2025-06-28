@@ -9,7 +9,7 @@ pub const URL_GET_COMPANY: &str = "https://corplink.volcengine.cn/api/match";
 
 const URL_GET_LOGIN_METHOD: &str = "{{url}}/api/login/setting?os={{os}}&os_version={{version}}";
 const URL_GET_TPS_LOGIN_METHOD: &str = "{{url}}/api/tpslogin/link?os={{os}}&os_version={{version}}";
-const URL_GET_TPS_TOEKN_CHECK: &str =
+const URL_GET_TPS_TOKEN_CHECK: &str =
     "{{url}}/api/tpslogin/token/check?os={{os}}&os_version={{version}}";
 const URL_GET_CORPLINK_LOGIN_METHOD: &str = "{{url}}/api/lookup?os={{os}}&os_version={{version}}";
 const URL_REQUEST_CODE: &str = "{{url}}/api/login/code/send?os={{os}}&os_version={{version}}";
@@ -74,7 +74,7 @@ impl ApiUrl {
         );
         api_template.insert(
             ApiName::TpsTokenCheck,
-            Template::new(URL_GET_TPS_TOEKN_CHECK),
+            Template::new(URL_GET_TPS_TOKEN_CHECK),
         );
         api_template.insert(
             ApiName::CorplinkLoginMethod,

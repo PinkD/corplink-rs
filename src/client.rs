@@ -62,7 +62,7 @@ unsafe impl Sync for Client {}
 
 pub async fn get_company_url(code: &str) -> Result<RespCompany, Error> {
     let c = ClientBuilder::new()
-        // alow invalid certs because this cert is signed by corplink
+        // allow invalid certs because this cert is signed by corplink
         .danger_accept_invalid_certs(true)
         .build();
     if let Err(err) = c {
@@ -144,7 +144,7 @@ impl Client {
         let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
 
         let c = ClientBuilder::new()
-            // alow invalid certs because this cert is signed by corplink
+            // allow invalid certs because this cert is signed by corplink
             .danger_accept_invalid_certs(true)
             // for debug
             // .proxy(reqwest::Proxy::all("socks5://192.168.111.233:8001").unwrap())
@@ -209,7 +209,7 @@ impl Client {
         };
         // TODO: handle special cases
         if !resp.status().is_success() {
-            let msg = format!("logout becuase of bad resp code: {}", resp.status());
+            let msg = format!("logout because of bad resp code: {}", resp.status());
             return Err(self.handle_logout_err(msg).await);
         }
 
@@ -333,17 +333,17 @@ impl Client {
                 continue;
             }
             if let Some(password) = &self.conf.password {
-                if !password.is_empty() {
-                    return self.login_with_password(PLATFORM_LDAP).await;
+                return if !password.is_empty() {
+                    self.login_with_password(PLATFORM_LDAP).await
                 } else {
-                    return Err(Error::Error("no password provided".to_string()));
-                }
+                    Err(Error::Error("no password provided".to_string()))
+                };
             }
         }
         panic!("failed to login with ldap");
     }
 
-    fn is_platform_or_default(&mut self, platform: &str) -> bool {
+    fn is_platform_or_default(&self, platform: &str) -> bool {
         if let Some(p) = &self.conf.platform {
             return p.is_empty() || platform == p;
         }
