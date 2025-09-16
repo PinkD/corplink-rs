@@ -131,13 +131,13 @@ impl Client {
                     .insert_raw(&RawCookie::new("device_name", device_name), &server_url);
             }
 
-            if let Some(csrf_token) =
-                cookie_store.get(server_url.domain().unwrap(), "/", "csrf-token")
-            {
-                headers.insert(
-                    "csrf-token",
-                    header::HeaderValue::from_str(csrf_token.value()).unwrap(),
-                );
+            if let Some(domain) = server_url.domain().or_else(|| server_url.host_str()) {
+                if let Some(csrf_token) = cookie_store.get(domain, "/", "csrf-token") {
+                    headers.insert(
+                        "csrf-token",
+                        header::HeaderValue::from_str(csrf_token.value()).unwrap(),
+                    );
+                }
             }
         }
 
