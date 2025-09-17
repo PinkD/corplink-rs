@@ -43,13 +43,13 @@ jobs:
       - name: create tarball
         run: |
           cp pack/pkg/corplink-rs/usr/bin/corplink-rs .
-          cp pack/pkg/corplink-rs/etc/corplink-rs/config.json .
+          cp config/config.json .
           tar -czf corplink-rs-${{ github.ref_name }}-linux-$(uname -m).tar.gz corplink-rs config.json
       - name: upload tarball to release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: pack/corplink-rs-${{ github.ref_name }}*.tar.gz
+          file: corplink-rs-${{ github.ref_name }}*.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
           file_glob: true
