@@ -77,7 +77,7 @@ pub struct RespWgExtraInfo {
     pub vpn_dns_domain_split: Option<Vec<String>>,
     pub vpn_route_full: Vec<String>,
     pub vpn_route_split: Vec<String>,
-    pub v6_route_full: Vec<String>,
+    pub v6_route_full: Option<Vec<String>>,
     pub v6_route_split: Option<Vec<String>>,
 }
 
