@@ -192,6 +192,8 @@ graph TD;
 
 # Changelog
 
+- 0.5.2
+  - add ipv6 support(@hexchain @ManiaciaChao)
 - 0.5.1
   - support using dns from server for macos(@fanwenlin)
   - fix high cpu usage
@@ -264,7 +266,7 @@ graph TD;
 # License
 
 ```license
- Copyright (C) 2023  PinkD, ShuNing, LionheartLann, XYenon, Verge, jixiuf
+ Copyright (C) 2023  PinkD, ShuNing, LionheartLann, XYenon, Verge, jixiuf, simpleapples, overvenus, fanwenlin, hexchain, ManiaciaChao
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
