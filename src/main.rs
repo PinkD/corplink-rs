@@ -170,9 +170,9 @@ async fn main() {
         } => {},
 
         // keep alive
-        _ = c.keep_alive_vpn(&wg_conf, 60) => {
-            exit_code = ETIMEDOUT;
-        },
+        // _ = c.keep_alive_vpn(&wg_conf, 60) => {
+        //     exit_code = ETIMEDOUT;
+        // },
 
         // check wg handshake and exit if timeout
         _ = async {
