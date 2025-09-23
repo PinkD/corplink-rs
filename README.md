@@ -192,6 +192,8 @@ graph TD;
 
 # Changelog
 
+- 0.5.3
+  - remove keep-alive api call
 - 0.5.2
   - add ipv6 support(@hexchain @ManiaciaChao)
 - 0.5.1
