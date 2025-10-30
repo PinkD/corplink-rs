@@ -283,8 +283,10 @@ impl Client {
     ) -> Result<String, Error> {
         log::info!("old token is: {token}");
         log::info!("please scan the QR code or visit the following link to auth corplink:\n{url}");
-        let code = TerminalQrCode::from_bytes(url.as_bytes());
-        code.print();
+        match TerminalQrCode::from_bytes(url.as_bytes()) {
+            Ok(qr) => qr.print(),
+            Err(_) => {}
+        }
         match method {
             PLATFORM_LARK | PLATFORM_OIDC => {
                 log::info!("press enter if you finish auth");
@@ -756,7 +758,11 @@ impl Client {
         let address6 = (!wg_info.ipv6.is_empty())
             .then_some(format!("{}/128", wg_info.ipv6))
             .unwrap_or("".into());
-        let route = [wg_info.setting.vpn_route_split, wg_info.setting.v6_route_split.unwrap_or_default()].concat();
+        let route = [
+            wg_info.setting.vpn_route_split,
+            wg_info.setting.v6_route_split.unwrap_or_default(),
+        ]
+        .concat();
 
         // corplink config
         let wg_conf = WgConf {

@@ -1,3 +1,4 @@
+use qrcode::types::QrError;
 use qrcode::{EcLevel, QrCode, Version};
 use terminal_graphics::Colour;
 use terminal_graphics::Display;
@@ -8,9 +9,16 @@ pub struct TerminalQrCode {
 }
 
 impl TerminalQrCode {
-    pub fn from_bytes<D: AsRef<[u8]>>(data: D) -> TerminalQrCode {
-        let code = QrCode::with_version(data, Version::Normal(20), EcLevel::L).unwrap();
-        TerminalQrCode { code }
+    pub fn from_bytes<D: AsRef<[u8]>>(data: D) -> Result<TerminalQrCode,QrError>{
+        match QrCode::with_version(data.as_ref(), Version::Normal(20), EcLevel::L) {
+            Ok(code) => Ok(TerminalQrCode { code }),
+            Err(e) => {
+                eprintln!("Error generating QR code: {}", e);
+                println!("Try to access url directly: {}",str::from_utf8(data.as_ref()).unwrap());
+				Err(e)
+
+            }
+        }
     }
 
     pub fn print(&self) {
