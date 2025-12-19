@@ -38,7 +38,7 @@ pub enum ApiName {
     ConnectVPN,
     KeepAliveVPN,
     DisconnectVPN,
-    OTP,
+    Otp,
 }
 
 #[derive(Clone, Serialize)]
@@ -89,7 +89,7 @@ impl ApiUrl {
         api_template.insert(ApiName::ConnectVPN, Template::new(URL_FETCH_PEER_INFO));
         api_template.insert(ApiName::KeepAliveVPN, Template::new(URL_OPERATE_VPN));
         api_template.insert(ApiName::DisconnectVPN, Template::new(URL_OPERATE_VPN));
-        api_template.insert(ApiName::OTP, Template::new(URL_OTP));
+        api_template.insert(ApiName::Otp, Template::new(URL_OTP));
 
         Ok(ApiUrl {
             user_param: UserUrlParam {
@@ -121,7 +121,7 @@ impl ApiUrl {
             ApiName::LoginEmail => self.api_template[name].render(user_param),
             ApiName::LoginPassword => self.api_template[name].render(user_param),
             ApiName::ListVPN => self.api_template[name].render(user_param),
-            ApiName::OTP => self.api_template[name].render(user_param),
+            ApiName::Otp => self.api_template[name].render(user_param),
 
             ApiName::PingVPN => self.api_template[name].render(vpn_param),
             ApiName::ConnectVPN => self.api_template[name].render(vpn_param),

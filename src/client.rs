@@ -356,7 +356,7 @@ impl Client {
 
     async fn request_otp_code(&mut self) -> Result<String> {
         let m = Map::new();
-        let resp = self.request::<RespOtp>(ApiName::OTP, Some(m)).await?;
+        let resp = self.request::<RespOtp>(ApiName::Otp, Some(m)).await?;
         match resp.code {
             0 => Ok(resp.data.context("otp response missing data")?.url),
             _ => {

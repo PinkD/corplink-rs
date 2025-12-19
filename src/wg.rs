@@ -16,9 +16,10 @@ mod libwg {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
-fn start_wg(log_level: i32, protocol: i32, interface_name: &str) -> i32 {
-    let name = interface_name.as_bytes();
-    unsafe { libwg::startWg(log_level, protocol, to_c_char_array(name)) }
+fn start_wg(log_level: i32, protocol: i32, interface_name: &str) -> Result<i32> {
+    let input_cstring =
+        CString::new(interface_name.as_bytes()).context("buff contains null character")?;
+    unsafe { Ok(libwg::startWg(log_level, protocol, input_cstring.as_ptr())) }
 }
 
 fn stop_wg() {
@@ -27,16 +28,16 @@ fn stop_wg() {
     }
 }
 
-unsafe fn to_c_char_array(data: &[u8]) -> *const c_char {
-    CString::from_vec_unchecked(data.to_vec()).into_raw() as *const c_char
-}
-
-fn uapi(buff: &[u8]) -> Vec<u8> {
+fn uapi(buff: &[u8]) -> Result<Vec<u8>> {
+    let input_cstring = CString::new(buff).context("buff contains null character")?;
     unsafe {
-        let s = libwg::uapi(to_c_char_array(buff));
-        let result = CStr::from_ptr(s).to_bytes().to_vec();
-        libc::free(s as *mut c_void);
-        result
+        let result_ptr = libwg::uapi(input_cstring.as_ptr());
+        if result_ptr.is_null() {
+            return Err(anyhow!("libwg::uapi() returned null pointer"));
+        }
+        let result = CStr::from_ptr(result_ptr).to_bytes().to_vec();
+        libc::free(result_ptr as *mut c_void);
+        Ok(result)
     }
 }
 
@@ -44,14 +45,17 @@ pub fn stop_wg_go() {
     stop_wg();
 }
 
-pub fn start_wg_go(name: &str, protocol: i32, with_log: bool) -> bool {
+pub fn start_wg_go(name: &str, protocol: i32, with_log: bool) -> Result<()> {
     log::info!("start wg-corplink");
     let mut log_level = libwg::LogLevelError;
     if with_log {
         log_level = libwg::LogLevelVerbose;
     }
-    let ret = start_wg(log_level, protocol, name);
-    matches!(ret, 0)
+    let ret = start_wg(log_level, protocol, name)?;
+    if !matches!(ret, 0) {
+        return Err(anyhow!("start_wg returned non-zero code: {ret}"));
+    }
+    Ok(())
 }
 
 pub struct UAPIClient {
@@ -101,7 +105,7 @@ impl UAPIClient {
 
         buff.push('\n');
         log::info!("send config to uapi");
-        let data = uapi(buff.as_bytes());
+        let data = uapi(buff.as_bytes()).context("call uapi")?;
         let s = String::from_utf8(data).context("failed to decode uapi response")?;
         if !s.contains("errno=0") {
             return Err(anyhow!("uapi returns unexpected result: {}", s));
@@ -121,7 +125,13 @@ impl UAPIClient {
             ticker.tick().await;
 
             let name = self.name.as_str();
-            let data = uapi(b"get=1\n\n");
+            let data = match uapi(b"get=1\n\n") {
+                Ok(data) => data,
+                Err(e) => {
+                    log::warn!("failed to call uapi for {}: {}", name, e);
+                    continue;
+                }
+            };
             let s = match String::from_utf8(data) {
                 Ok(s) => s,
                 Err(err) => {

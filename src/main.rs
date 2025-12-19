@@ -140,10 +140,8 @@ async fn run() -> Result<()> {
     log::info!("start wg-corplink for {}", &name);
     let wg_conf = wg_conf.ok_or_else(|| anyhow!("wg conf missing after connect loop"))?;
     let protocol = wg_conf.protocol;
-    if !wg::start_wg_go(&name, protocol, with_wg_log) {
-        log::warn!("failed to start wg-corplink for {}", name);
-        return Err(anyhow!("wg process exited unexpectedly"));
-    }
+    wg::start_wg_go(&name, protocol, with_wg_log)
+        .with_context(|| format!("failed to start wg-corplink for {}", name))?;
     let mut uapi = wg::UAPIClient { name: name.clone() };
     uapi.config_wg(&wg_conf)
         .await
@@ -172,7 +170,7 @@ async fn run() -> Result<()> {
                     log::warn!("failed to receive signal: {}",e);
                 },
             }
-            log::info!("ctrl+v received");
+            log::info!("ctrl+c received");
         } => {},
 
         // keep alive
