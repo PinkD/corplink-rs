@@ -1,6 +1,7 @@
 use std::ffi::{c_char, c_void, CStr, CString};
-use std::io;
 use std::time;
+
+use anyhow::{anyhow, Context, Result};
 
 use crate::{config, utils};
 
@@ -58,12 +59,12 @@ pub struct UAPIClient {
 }
 
 impl UAPIClient {
-    pub async fn config_wg(&mut self, conf: &config::WgConf) -> io::Result<()> {
+    pub async fn config_wg(&mut self, conf: &config::WgConf) -> Result<()> {
         let mut buff = String::from("set=1\n");
         // standard wg-go uapi operations
         // see https://www.wireguard.com/xplatform/#configuration-protocol
-        let private_key = utils::b64_decode_to_hex(&conf.private_key);
-        let public_key = utils::b64_decode_to_hex(&conf.peer_key);
+        let private_key = utils::b64_decode_to_hex(&conf.private_key)?;
+        let public_key = utils::b64_decode_to_hex(&conf.peer_key)?;
         buff.push_str(format!("private_key={private_key}\n").as_str());
         buff.push_str("replace_peers=true\n".to_string().as_str());
         buff.push_str(format!("public_key={public_key}\n").as_str());
@@ -92,7 +93,7 @@ impl UAPIClient {
             if route.contains("/") {
                 buff.push_str(format!("route={route}\n").as_str());
             } else {
-                let prefix_len = route.contains(":").then_some(128).unwrap_or(32);
+                let prefix_len = if route.contains(":") { 128 } else { 32 };
                 buff.push_str(format!("route={route}/{prefix_len}\n").as_str());
             }
         }
@@ -101,12 +102,9 @@ impl UAPIClient {
         buff.push('\n');
         log::info!("send config to uapi");
         let data = uapi(buff.as_bytes());
-        let s = String::from_utf8(data).unwrap();
+        let s = String::from_utf8(data).context("failed to decode uapi response")?;
         if !s.contains("errno=0") {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                format!("uapi returns unexpected result: {}", s),
-            ));
+            return Err(anyhow!("uapi returns unexpected result: {}", s));
         }
         Ok(())
     }
@@ -124,29 +122,48 @@ impl UAPIClient {
 
             let name = self.name.as_str();
             let data = uapi(b"get=1\n\n");
-            let s = String::from_utf8(data).unwrap();
+            let s = match String::from_utf8(data) {
+                Ok(s) => s,
+                Err(err) => {
+                    log::warn!("failed to parse uapi response for {}: {}", name, err);
+                    continue;
+                }
+            };
             for line in s.split('\n') {
                 if line.starts_with("last_handshake_time_sec") {
-                    match line.trim_end().split('=').last().unwrap().parse::<i64>() {
+                    let last = match line.trim_end().split('=').next_back() {
+                        Some(v) => v,
+                        None => {
+                            log::warn!("unexpected uapi line: {}", line);
+                            continue;
+                        }
+                    };
+                    match last.parse::<i64>() {
                         Ok(timestamp) => {
                             if timestamp == 0 {
                                 // do nothing because it's invalid
-                            } else {
-                                let nt = chrono::DateTime::from_timestamp(timestamp, 0).unwrap();
+                            } else if let Some(nt) = chrono::DateTime::from_timestamp(timestamp, 0)
+                            {
                                 let now = chrono::Utc::now().to_utc();
                                 let t = now - nt;
                                 let tt = nt.to_utc();
                                 let lt = tt.with_timezone(&chrono::Local);
-                                let elapsed = t.to_std().unwrap().as_secs_f32();
-                                log::info!("last handshake is at {lt}, elapsed time {elapsed}s");
-                                if t > chrono::Duration::from_std(interval).unwrap() {
-                                    log::warn!(
-                                        "last handshake is at {}, elapsed time {}s more than {}s",
-                                        lt,
-                                        elapsed,
-                                        interval.as_secs()
+                                if let Ok(elapsed) = t.to_std() {
+                                    let elapsed = elapsed.as_secs_f32();
+                                    log::info!(
+                                        "last handshake is at {lt}, elapsed time {elapsed}s"
                                     );
-                                    timeout = true;
+                                    if let Ok(interval_dur) = chrono::Duration::from_std(interval) {
+                                        if t > interval_dur {
+                                            log::warn!(
+                                                    "last handshake is at {}, elapsed time {}s more than {}s",
+                                                    lt,
+                                                    elapsed,
+                                                    interval.as_secs()
+                                                );
+                                            timeout = true;
+                                        }
+                                    }
                                 }
                             }
                         }

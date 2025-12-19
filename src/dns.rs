@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::io::Error;
 use std::process::Command;
+
+use anyhow::{Context, Result};
 
 pub struct DNSManager {
     service_dns: HashMap<String, String>,
@@ -15,10 +16,11 @@ impl DNSManager {
         }
     }
 
-    fn collect_new_service_dns(&mut self) -> Result<(), Error> {
+    fn collect_new_service_dns(&mut self) -> Result<()> {
         let output = Command::new("networksetup")
             .arg("-listallnetworkservices")
-            .output()?;
+            .output()
+            .context("failed to list network services")?;
 
         let services = String::from_utf8_lossy(&output.stdout);
         let lines = services.lines();
@@ -34,7 +36,8 @@ impl DNSManager {
             let dns_output = Command::new("networksetup")
                 .arg("-getdnsservers")
                 .arg(service)
-                .output()?;
+                .output()
+                .with_context(|| format!("failed to get dns servers for {service}"))?;
             let dns_response = String::from_utf8_lossy(&dns_output.stdout)
                 .trim()
                 .to_string();
@@ -53,7 +56,8 @@ impl DNSManager {
             let search_output = Command::new("networksetup")
                 .arg("-getsearchdomains")
                 .arg(service)
-                .output()?;
+                .output()
+                .with_context(|| format!("failed to get search domains for {service}"))?;
             let search_response = String::from_utf8_lossy(&search_output.stdout)
                 .trim()
                 .to_string();
@@ -76,27 +80,26 @@ impl DNSManager {
         Ok(())
     }
 
-    pub fn set_dns(&mut self, dns_servers: Vec<&str>, dns_search: Vec<&str>) -> Result<(), Error> {
+    pub fn set_dns(&mut self, dns_servers: Vec<&str>, dns_search: Vec<&str>) -> Result<()> {
         if dns_servers.is_empty() {
             return Ok(());
         }
-        match self.collect_new_service_dns() {
-            Err(e) => return Err(e),
-            _ => {}
-        }
+        self.collect_new_service_dns()?;
         for service in self.service_dns.keys() {
             Command::new("networksetup")
                 .arg("-setdnsservers")
                 .arg(service)
                 .args(&dns_servers)
-                .status()?;
+                .status()
+                .with_context(|| format!("failed to set dns servers for {service}"))?;
 
             if !dns_search.is_empty() {
                 Command::new("networksetup")
                     .arg("-setsearchdomains")
                     .arg(service)
                     .args(&dns_search)
-                    .status()?;
+                    .status()
+                    .with_context(|| format!("failed to set search domains for {service}"))?;
             }
             log::debug!("DNS set for {} with {}", service, dns_servers.join(","));
         }
@@ -104,13 +107,14 @@ impl DNSManager {
         Ok(())
     }
 
-    pub fn restore_dns(&self) -> Result<(), Error> {
+    pub fn restore_dns(&self) -> Result<()> {
         for (service, dns) in &self.service_dns {
             Command::new("networksetup")
                 .arg("-setdnsservers")
                 .arg(service)
                 .args(dns.lines())
-                .status()?;
+                .status()
+                .with_context(|| format!("failed to reset dns servers for {service}"))?;
 
             log::debug!("DNS server reset for {} with {}", service, dns);
         }
@@ -119,7 +123,8 @@ impl DNSManager {
                 .arg("-setsearchdomains")
                 .arg(service)
                 .args(search_domain.lines())
-                .status()?;
+                .status()
+                .with_context(|| format!("failed to reset search domains for {service}"))?;
             log::debug!(
                 "DNS search domain reset for {} with {}",
                 service,

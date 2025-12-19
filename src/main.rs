@@ -16,9 +16,10 @@ use is_elevated;
 #[cfg(target_os = "macos")]
 use dns::DNSManager;
 
-use env_logger;
 use std::env;
 use std::process::exit;
+
+use anyhow::{anyhow, Context, Result};
 
 use client::Client;
 use config::{Config, WgConf};
@@ -60,6 +61,13 @@ pub const ETIMEDOUT: i32 = 110;
 
 #[tokio::main]
 async fn main() {
+    if let Err(err) = run().await {
+        log::error!("{:#}", err);
+        exit(EPERM);
+    }
+}
+
+async fn run() -> Result<()> {
     // NOTE: If you want to debug, you should set `RUST_LOG` env to `debug` and run corplink-rs in root
     //  because `check_privilege` will call sudo and drop env if you're not root
     env_logger::init();
@@ -68,45 +76,47 @@ async fn main() {
     check_privilege();
 
     let conf_file = parse_arg();
-    let mut conf = Config::from_file(&conf_file).await;
-    let name = conf.interface_name.clone().unwrap();
+    let mut conf = Config::from_file(&conf_file)
+        .await
+        .context("failed to load config")?;
+    let name = conf
+        .interface_name
+        .clone()
+        .context("interface name missing in config")?;
 
     #[cfg(target_os = "macos")]
     let use_vpn_dns = conf.use_vpn_dns.unwrap_or(false);
 
-    match conf.server {
-        Some(_) => {}
-        None => match client::get_company_url(conf.company_name.as_str()).await {
-            Ok(resp) => {
-                log::info!(
-                    "company name is {}(zh)/{}(en) server is {}",
-                    resp.zh_name,
-                    resp.en_name,
-                    resp.domain
-                );
-                conf.server = Some(resp.domain);
-                conf.save().await;
-            }
-            Err(err) => {
-                log::error!(
-                    "failed to fetch company server from company name {}: {}",
-                    conf.company_name,
-                    err
-                );
-                exit(EPERM);
-            }
-        },
+    if conf.server.is_none() {
+        let resp = client::get_company_url(conf.company_name.as_str())
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to fetch company server from company name {}",
+                    conf.company_name
+                )
+            })?;
+        log::info!(
+            "company name is {}(zh)/{}(en) server is {}",
+            resp.zh_name,
+            resp.en_name,
+            resp.domain
+        );
+        conf.server = Some(resp.domain);
+        conf.save()
+            .await
+            .context("failed to persist company server")?;
     }
 
     let with_wg_log = conf.debug_wg.unwrap_or_default();
-    let mut c = Client::new(conf).unwrap();
+    let mut c = Client::new(conf).context("failed to initialize client")?;
     let mut logout_retry = true;
     let wg_conf: Option<WgConf>;
 
     loop {
         if c.need_login() {
             log::info!("not login yet, try to login");
-            c.login().await.unwrap();
+            c.login().await.context("login failed")?;
             log::info!("login success");
         }
         log::info!("try to connect");
@@ -122,26 +132,22 @@ async fn main() {
                     logout_retry = false;
                     continue;
                 } else {
-                    panic!("{}", e);
+                    return Err(e);
                 }
             }
         };
     }
     log::info!("start wg-corplink for {}", &name);
-    let wg_conf = wg_conf.unwrap();
+    let wg_conf = wg_conf.ok_or_else(|| anyhow!("wg conf missing after connect loop"))?;
     let protocol = wg_conf.protocol;
     if !wg::start_wg_go(&name, protocol, with_wg_log) {
         log::warn!("failed to start wg-corplink for {}", name);
-        exit(EPERM);
+        return Err(anyhow!("wg process exited unexpectedly"));
     }
     let mut uapi = wg::UAPIClient { name: name.clone() };
-    match uapi.config_wg(&wg_conf).await {
-        Ok(_) => {}
-        Err(err) => {
-            log::error!("failed to config interface with uapi for {}: {}", name, err);
-            exit(EPERM);
-        }
-    }
+    uapi.config_wg(&wg_conf)
+        .await
+        .with_context(|| format!("failed to config interface with uapi for {name}"))?;
 
     #[cfg(target_os = "macos")]
     let mut dns_manager = DNSManager::new();
@@ -185,9 +191,8 @@ async fn main() {
 
     // shutdown
     log::info!("disconnecting vpn...");
-    match c.disconnect_vpn(&wg_conf).await {
-        Ok(_) => {}
-        Err(e) => log::warn!("failed to disconnect vpn: {}", e),
+    if let Err(e) = c.disconnect_vpn(&wg_conf).await {
+        log::warn!("failed to disconnect vpn: {}", e)
     };
 
     wg::stop_wg_go();

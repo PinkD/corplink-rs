@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::config::Config;
@@ -62,7 +63,7 @@ pub struct ApiUrl {
 }
 
 impl ApiUrl {
-    pub fn new(conf: &Config) -> ApiUrl {
+    pub fn new(conf: &Config) -> Result<ApiUrl> {
         let os = "Android".to_string();
         let version = "2".to_string();
         let mut api_template = HashMap::new();
@@ -90,9 +91,12 @@ impl ApiUrl {
         api_template.insert(ApiName::DisconnectVPN, Template::new(URL_OPERATE_VPN));
         api_template.insert(ApiName::OTP, Template::new(URL_OTP));
 
-        ApiUrl {
+        Ok(ApiUrl {
             user_param: UserUrlParam {
-                url: conf.server.clone().unwrap(),
+                url: conf
+                    .server
+                    .clone()
+                    .context("server url missing in config")?,
                 os: os.clone(),
                 version: version.clone(),
             },
@@ -102,7 +106,7 @@ impl ApiUrl {
                 version,
             },
             api_template,
-        }
+        })
     }
 
     pub fn get_api_url(&self, name: &ApiName) -> String {

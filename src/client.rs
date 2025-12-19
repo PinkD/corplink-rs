@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
 
+use anyhow::{anyhow, bail, Context, Result};
 use cookie::Cookie as RawCookie;
 use cookie_store::{Cookie, CookieStore};
 use reqwest::header;
@@ -30,23 +31,6 @@ use crate::utils;
 const COOKIE_FILE_SUFFIX: &str = "cookies.json";
 const USER_AGENT: &str = "CorpLink/201000 (GooglePixel; Android 10; en)";
 
-#[derive(Debug)]
-pub enum Error {
-    ReqwestError(reqwest::Error),
-    Error(String),
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::ReqwestError(err) => err.fmt(f),
-            Error::Error(err) => {
-                write!(f, "{}", err)
-            }
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Client {
     conf: Config,
@@ -60,55 +44,56 @@ unsafe impl Send for Client {}
 
 unsafe impl Sync for Client {}
 
-pub async fn get_company_url(code: &str) -> Result<RespCompany, Error> {
+pub async fn get_company_url(code: &str) -> anyhow::Result<RespCompany> {
     let c = ClientBuilder::new()
         // allow invalid certs because this cert is signed by corplink
         .danger_accept_invalid_certs(true)
-        .build();
-    if let Err(err) = c {
-        return Err(Error::ReqwestError(err));
-    }
-    let c = c.unwrap();
+        .build()
+        .context("build client")?;
     let mut m = Map::new();
     m.insert("code".to_string(), json!(code));
-    let body = serde_json::to_string(&m).unwrap();
+    let body = serde_json::to_string(&m).context("serialize company request body")?;
 
-    let resp = c.post(URL_GET_COMPANY).body(body).send().await;
-    if let Err(err) = resp {
-        return Err(Error::ReqwestError(err));
-    }
-    let resp = resp.unwrap().json::<Resp<RespCompany>>().await;
-    if let Err(err) = resp {
-        return Err(Error::ReqwestError(err));
-    }
-    let resp = resp.unwrap();
+    let resp = c
+        .post(URL_GET_COMPANY)
+        .body(body)
+        .send()
+        .await
+        .context("get company")?
+        .json::<Resp<RespCompany>>()
+        .await
+        .context("parse company resp")?;
     match resp.code {
-        0 => Ok(resp.data.unwrap()),
-        _ => {
-            let msg = resp.message.unwrap();
-            Err(Error::Error(msg))
-        }
+        0 => resp.data.context("company response missing data"),
+        _ => Err(anyhow!(resp
+            .message
+            .unwrap_or_else(|| "failed to fetch company info".to_string()))),
     }
 }
 
 impl Client {
-    pub fn new(conf: Config) -> Result<Client, Error> {
-        let f = conf.conf_file.clone().unwrap();
+    pub fn new(conf: Config) -> Result<Client> {
+        let f = conf.conf_file.clone().context("config file path missing")?;
+        let interface_name = conf
+            .interface_name
+            .clone()
+            .context("interface name missing in config")?;
         let dir = match path::Path::new(&f).parent() {
             Some(dir) => dir,
             None => path::Path::new("."),
         };
-        let cookie_file = dir.join(format!(
-            "{}_{}",
-            conf.interface_name.clone().unwrap(),
-            COOKIE_FILE_SUFFIX
-        ));
-        log::info!("cookie file is: {}", cookie_file.to_str().unwrap());
+        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
+        log::info!("cookie file is: {}", cookie_file.to_string_lossy());
 
         let mut cookie_store = {
-            let file = fs::File::open(cookie_file).map(io::BufReader::new);
+            let file = fs::File::open(&cookie_file).map(io::BufReader::new);
             match file {
-                Ok(file) => CookieStore::load_json_all(file).unwrap(),
+                Ok(file) => CookieStore::load_json_all(file).or_else(|e| {
+                    bail!(
+                        "failed to load cookie store from {}: {e}",
+                        cookie_file.display()
+                    )
+                })?,
                 Err(_) => CookieStore::default(),
             }
         };
@@ -119,24 +104,26 @@ impl Client {
 
         let mut headers = header::HeaderMap::new();
 
-        if let Some(server) = &conf.server.clone() {
-            let server_url = Url::from_str(server.as_str()).unwrap();
+        if let Some(server) = conf.server.as_ref() {
+            let server_url = Url::from_str(server.as_str())
+                .with_context(|| format!("invalid server url: {server}"))?;
 
-            if let Some(device_id) = &conf.device_id.clone() {
-                let _ =
-                    cookie_store.insert_raw(&RawCookie::new("device_id", device_id), &server_url);
+            if let Some(device_id) = conf.device_id.as_ref() {
+                cookie_store
+                    .insert_raw(&RawCookie::new("device_id", device_id), &server_url)
+                    .context("failed to insert device_id cookie")?;
             }
-            if let Some(device_name) = &conf.device_name.clone() {
-                let _ = cookie_store
-                    .insert_raw(&RawCookie::new("device_name", device_name), &server_url);
+            if let Some(device_name) = conf.device_name.as_ref() {
+                cookie_store
+                    .insert_raw(&RawCookie::new("device_name", device_name), &server_url)
+                    .context("failed to insert device_name cookie")?;
             }
 
             if let Some(domain) = server_url.domain().or_else(|| server_url.host_str()) {
                 if let Some(csrf_token) = cookie_store.get(domain, "/", "csrf-token") {
-                    headers.insert(
-                        "csrf-token",
-                        header::HeaderValue::from_str(csrf_token.value()).unwrap(),
-                    );
+                    let value = header::HeaderValue::from_str(csrf_token.value())
+                        .context("invalid csrf-token header value")?;
+                    headers.insert("csrf-token", value);
                 }
             }
         }
@@ -152,113 +139,123 @@ impl Client {
             .cookie_provider(Arc::clone(&cookie_store))
             .default_headers(headers)
             .timeout(Duration::from_millis(10000))
-            .build();
-        if let Err(err) = c {
-            return Err(Error::ReqwestError(err));
-        }
+            .build()
+            .context("build http client")?;
         let conf_bak = conf.clone();
-        let c = c.unwrap();
         Ok(Client {
             conf,
             cookie: Arc::clone(&cookie_store),
             c,
-            api_url: ApiUrl::new(&conf_bak),
+            api_url: ApiUrl::new(&conf_bak)?,
             date_offset_sec: 0,
         })
     }
 
-    async fn change_state(&mut self, state: State) {
+    async fn change_state(&mut self, state: State) -> Result<()> {
         self.conf.state = Some(state);
-        self.conf.save().await;
+        self.conf.save().await?;
+        Ok(())
     }
 
-    fn save_cookie(&self) {
+    fn save_cookie(&self) -> Result<()> {
+        let interface_name = self
+            .conf
+            .interface_name
+            .as_ref()
+            .context("interface name missing in config")?;
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .append(false)
-            .open(format!(
-                "{}_{}",
-                self.conf.interface_name.clone().unwrap(),
-                COOKIE_FILE_SUFFIX
-            ))
+            .open(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX))
             .map(io::BufWriter::new)
-            .unwrap();
-        let c = self.cookie.lock().unwrap();
-        c.save_json(&mut file).unwrap();
+            .with_context(|| "failed to open cookie file for writing")?;
+        let c = self
+            .cookie
+            .lock()
+            .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
+        c.save_json(&mut file)
+            .or_else(|e| bail!("failed to persist cookies to disk: {e}"))?;
+        Ok(())
     }
 
     async fn request<T: DeserializeOwned + fmt::Debug>(
         &mut self,
         api: ApiName,
         body: Option<Map<String, Value>>,
-    ) -> Result<Resp<T>, Error> {
+    ) -> Result<Resp<T>> {
         let url = self.api_url.get_api_url(&api);
 
         let rb = match body {
             Some(body) => {
-                let body = serde_json::to_string(&body).unwrap();
+                let body = serde_json::to_string(&body)
+                    .with_context(|| format!("failed to serialize request body for {api:?}"))?;
                 self.c.post(url).body(body)
             }
             None => self.c.get(url),
         };
 
-        let resp = match rb.send().await {
-            Ok(r) => r,
-            Err(err) => return Err(Error::ReqwestError(err)),
-        };
-        // TODO: handle special cases
+        let resp = rb
+            .send()
+            .await
+            .with_context(|| format!("request {api:?} failed"))?;
+
         if !resp.status().is_success() {
             let msg = format!("logout because of bad resp code: {}", resp.status());
-            return Err(self.handle_logout_err(msg).await);
+            self.handle_logout_err(msg).await?;
         }
 
         self.parse_time_offset_from_date_header(&resp);
 
         for (name, _) in resp.headers() {
-            if name.to_string().to_lowercase() == "set-cookie" {
+            if name.as_str().eq_ignore_ascii_case("set-cookie") {
                 log::info!("found set-cookie in header, saving cookie");
-                self.save_cookie();
+                self.save_cookie()?;
                 break;
             }
         }
-        let resp = resp.json::<Resp<T>>().await;
-        if let Err(err) = resp {
-            return Err(Error::ReqwestError(err));
-        }
-        let resp = resp.unwrap();
+        let resp = resp
+            .json::<Resp<T>>()
+            .await
+            .with_context(|| format!("failed to parse response for api {api:?}"))?;
         log::debug!("api {:#?} resp: {:#?}", api, resp);
         Ok(resp)
     }
 
     fn parse_time_offset_from_date_header(&mut self, resp: &Response) {
         let headers = resp.headers();
-        if headers.contains_key("date") {
-            let date = &headers["date"];
-            match httpdate::parse_http_date(date.to_str().unwrap()) {
-                Ok(date) => {
-                    let now = SystemTime::now();
-                    self.date_offset_sec = if now < date {
-                        let date_offset = date.duration_since(now).unwrap();
-                        date_offset.as_secs().try_into().unwrap()
-                    } else {
-                        let date_offset = now.duration_since(date).unwrap();
-                        let offset: i32 = date_offset.as_secs().try_into().unwrap();
-                        -offset
-                    };
-                }
-                Err(e) => {
-                    log::warn!("failed to parse date in header, ignore it: {}", e);
-                }
+        if let Some(date) = headers.get("date") {
+            match date.to_str() {
+                Ok(date) => match httpdate::parse_http_date(date) {
+                    Ok(date) => {
+                        let now = SystemTime::now();
+                        self.date_offset_sec = if now < date {
+                            let date_offset = date
+                                .duration_since(now)
+                                .unwrap_or_else(|_| Duration::from_secs(0));
+                            date_offset.as_secs().try_into().unwrap_or_default()
+                        } else {
+                            let date_offset = now
+                                .duration_since(date)
+                                .unwrap_or_else(|_| Duration::from_secs(0));
+                            let offset: i32 = date_offset.as_secs().try_into().unwrap_or_default();
+                            -offset
+                        };
+                    }
+                    Err(e) => {
+                        log::warn!("failed to parse date in header, ignore it: {}", e);
+                    }
+                },
+                Err(e) => log::warn!("failed to read date header: {}", e),
             }
         }
     }
 
     pub fn need_login(&self) -> bool {
-        return self.conf.state.is_none() || self.conf.state.as_ref().unwrap() == &State::Init;
+        matches!(self.conf.state.as_ref(), None | Some(State::Init))
     }
 
-    async fn check_tps_token(&mut self, token: &String) -> Result<String, Error> {
+    async fn check_tps_token(&mut self, token: &String) -> Result<String> {
         // tps confirmed, try to login with token
         let mut m = Map::new();
         m.insert("token".to_string(), json!(token));
@@ -267,10 +264,15 @@ impl Client {
             .request::<RespLogin>(ApiName::TpsTokenCheck, Some(m))
             .await?;
         match resp.code {
-            0 => Ok(resp.data.unwrap().url),
+            0 => resp
+                .data
+                .context("tps token check missing redirect url")
+                .map(|d| d.url),
             _ => {
-                let msg = resp.message.unwrap();
-                Err(Error::Error(msg))
+                let msg = resp
+                    .message
+                    .unwrap_or_else(|| "tps token check failed".to_string());
+                bail!(msg)
             }
         }
     }
@@ -280,12 +282,12 @@ impl Client {
         method: &str,
         url: &String,
         token: &String,
-    ) -> Result<String, Error> {
+    ) -> Result<String> {
         log::info!("old token is: {token}");
         log::info!("please scan the QR code or visit the following link to auth corplink:\n{url}");
         match TerminalQrCode::from_bytes(url.as_bytes()) {
             Ok(qr) => qr.print(),
-            Err(_) => {}
+            Err(e) => {log::warn!("failed to generate qr code: {e}");}
         }
         match method {
             PLATFORM_LARK | PLATFORM_OIDC => {
@@ -296,12 +298,12 @@ impl Client {
             }
             _ => {
                 // TODO: add all tps login support
-                panic!("unsupported platform, please contact the developer");
+                bail!("unsupported platform, please contact the developer");
             }
         }
     }
 
-    async fn corplink_login(&mut self) -> Result<String, Error> {
+    async fn corplink_login(&mut self) -> Result<String> {
         let resp = self.get_corplink_login_method().await?;
         for method in resp.auth {
             match method.as_str() {
@@ -324,10 +326,10 @@ impl Client {
                 }
             }
         }
-        panic!("failed to login with corplink");
+        bail!("failed to login with corplink")
     }
 
-    async fn ldap_login(&mut self) -> Result<String, Error> {
+    async fn ldap_login(&mut self) -> Result<String> {
         // I don't know why but we must get login method before login
         let resp = self.get_corplink_login_method().await?;
         for method in resp.auth {
@@ -338,11 +340,11 @@ impl Client {
                 return if !password.is_empty() {
                     self.login_with_password(PLATFORM_LDAP).await
                 } else {
-                    Err(Error::Error("no password provided".to_string()))
+                    bail!("no password provided")
                 };
             }
         }
-        panic!("failed to login with ldap");
+        bail!("failed to login with ldap")
     }
 
     fn is_platform_or_default(&self, platform: &str) -> bool {
@@ -352,14 +354,16 @@ impl Client {
         true
     }
 
-    async fn request_otp_code(&mut self) -> Result<String, Error> {
+    async fn request_otp_code(&mut self) -> Result<String> {
         let m = Map::new();
         let resp = self.request::<RespOtp>(ApiName::OTP, Some(m)).await?;
         match resp.code {
-            0 => Ok(resp.data.unwrap().url),
+            0 => Ok(resp.data.context("otp response missing data")?.url),
             _ => {
-                let msg = resp.message.unwrap();
-                Err(Error::Error(msg))
+                let msg = resp
+                    .message
+                    .unwrap_or_else(|| "request otp code failed".to_string());
+                bail!(msg)
             }
         }
     }
@@ -368,26 +372,24 @@ impl Client {
         &mut self,
         tps_login: &HashMap<String, RespTpsLoginMethod>,
         method: &String,
-    ) -> Result<String, Error> {
-        return match self.get_otp_uri(tps_login, method).await {
-            Ok(url) => {
-                if url == "" {
-                    self.request_otp_code().await
-                } else {
-                    Ok(url)
-                }
-            }
-            Err(e) => Err(e),
-        };
+    ) -> Result<String> {
+        let url = self.get_otp_uri(tps_login, method).await?;
+        if url.is_empty() {
+            self.request_otp_code().await
+        } else {
+            Ok(url)
+        }
     }
     async fn get_otp_uri(
         &mut self,
         tps_login: &HashMap<String, RespTpsLoginMethod>,
         method: &String,
-    ) -> Result<String, Error> {
-        if tps_login.contains_key(method) && self.is_platform_or_default(method) {
+    ) -> Result<String> {
+        if let Some(resp) = tps_login
+            .get(method)
+            .filter(|_| self.is_platform_or_default(method))
+        {
             log::info!("try to login with third party platform {method}");
-            let resp = tps_login.get(method).unwrap();
             return self
                 .get_otp_uri_from_tps(method, &resp.login_url, &resp.token)
                 .await;
@@ -411,7 +413,7 @@ impl Client {
     }
 
     // choose right login method and login
-    pub async fn login(&mut self) -> Result<(), Error> {
+    pub async fn login(&mut self) -> Result<()> {
         let resp = self.get_login_method().await?;
         let tps_login_resp = self.get_tps_login_method().await?;
         let mut tps_login = HashMap::new();
@@ -424,19 +426,19 @@ impl Client {
                 log::warn!("failed to login with method {method}: {e}");
                 continue;
             }
-            let otp_uri = otp_uri.unwrap();
+            let otp_uri = otp_uri?;
             if otp_uri.is_empty() {
                 log::warn!("failed to login with method {method}");
                 continue;
             }
-            self.change_state(State::Login).await;
+            self.change_state(State::Login).await?;
 
-            let url = Url::parse(&otp_uri).unwrap();
+            let url = Url::parse(&otp_uri).context("failed to parse otp uri")?;
             for (k, v) in url.query_pairs() {
                 if k == "secret" {
                     log::info!("got 2fa token: {}", &v);
                     self.conf.code = Some(v.to_string());
-                    self.conf.save().await;
+                    self.conf.save().await?;
                     break;
                 }
             }
@@ -449,18 +451,18 @@ impl Client {
             log::warn!("failed to get otp code");
             return Ok(());
         }
-        panic!("no available login method, please provide a valid platform")
+        bail!("no available login method, please provide a valid platform")
     }
 
-    async fn get_login_method(&mut self) -> Result<RespLoginMethod, Error> {
+    async fn get_login_method(&mut self) -> Result<RespLoginMethod> {
         let resp = self
             .request::<RespLoginMethod>(ApiName::LoginMethod, None)
             .await?;
-        Ok(resp.data.unwrap())
+        resp.data.context("login method response missing data")
     }
 
     // get 3rd party login methods and links, only lark(feishu) is tested
-    async fn get_tps_login_method(&mut self) -> Result<Vec<RespTpsLoginMethod>, Error> {
+    async fn get_tps_login_method(&mut self) -> Result<Vec<RespTpsLoginMethod>> {
         let resp = self
             .request::<Vec<RespTpsLoginMethod>>(ApiName::TpsLoginMethod, None)
             .await?;
@@ -468,7 +470,7 @@ impl Client {
     }
 
     // get corplink login method, knowing result can be password or email
-    async fn get_corplink_login_method(&mut self) -> Result<RespCorplinkLoginMethod, Error> {
+    async fn get_corplink_login_method(&mut self) -> Result<RespCorplinkLoginMethod> {
         let mut m = Map::new();
         m.insert("forget_password".to_string(), json!(false));
         m.insert("user_name".to_string(), json!(&self.conf.username));
@@ -476,11 +478,17 @@ impl Client {
         let resp = self
             .request::<RespCorplinkLoginMethod>(ApiName::CorplinkLoginMethod, Some(m))
             .await?;
-        Ok(resp.data.unwrap())
+        resp.data
+            .context("corplink login method response missing data")
     }
 
-    async fn login_with_password(&mut self, platform: &str) -> Result<String, Error> {
-        let mut password = self.conf.password.as_ref().unwrap().clone();
+    async fn login_with_password(&mut self, platform: &str) -> Result<String> {
+        let mut password = self
+            .conf
+            .password
+            .as_ref()
+            .context("password is required for password login")?
+            .clone();
         let mut m = Map::new();
         match platform {
             PLATFORM_LDAP => {
@@ -494,7 +502,7 @@ impl Client {
                 } // else: password already convert to sha256sum
             }
             _ => {
-                panic!("invalid platform {platform}")
+                bail!("invalid platform {platform}")
             }
         }
         m.insert("password".to_string(), json!(password));
@@ -504,15 +512,20 @@ impl Client {
             .request::<RespLogin>(ApiName::LoginPassword, Some(m))
             .await?;
         match resp.code {
-            0 => Ok(resp.data.unwrap().url),
+            0 => Ok(resp
+                .data
+                .context("password login response missing data")?
+                .url),
             _ => {
-                let msg = resp.message.unwrap();
-                Err(Error::Error(msg))
+                let msg = resp
+                    .message
+                    .unwrap_or_else(|| "login with password failed".to_string());
+                bail!(msg)
             }
         }
     }
 
-    async fn request_email_code(&mut self) -> Result<(), Error> {
+    async fn request_email_code(&mut self) -> Result<()> {
         let mut m = Map::new();
         m.insert("forget_password".to_string(), json!(false));
         m.insert("code_type".to_string(), json!("email"));
@@ -523,13 +536,13 @@ impl Client {
         Ok(())
     }
 
-    async fn login_with_email(&mut self) -> Result<String, Error> {
+    async fn login_with_email(&mut self) -> Result<String> {
         // tell server to send code to email
         log::info!("try to request code for email");
         self.request_email_code().await?;
 
         log::info!("input your code from email:");
-        let input = utils::read_line().await;
+        let input = utils::read_line().await?;
         let code = input.trim();
         let mut m = Map::new();
         m.insert("forget_password".to_string(), json!(false));
@@ -540,32 +553,40 @@ impl Client {
             .request::<RespLogin>(ApiName::LoginEmail, Some(m))
             .await?;
         match resp.code {
-            0 => Ok(resp.data.unwrap().url),
-            _ => Err(Error::Error(format!(
+            0 => Ok(resp.data.context("email login response missing data")?.url),
+            _ => bail!(format!(
                 "failed to login with email code {}: {}",
                 code,
-                resp.message.unwrap()
-            ))),
+                resp.message.unwrap_or_else(|| "unknown error".to_string())
+            )),
         }
     }
 
-    async fn handle_logout_err(&mut self, msg: String) -> Error {
-        self.change_state(State::Init).await;
-        Error::Error(format!("operation failed because of logout: {}", msg))
+    async fn handle_logout_err(&mut self, msg: String) -> Result<()> {
+        self.change_state(State::Init)
+            .await
+            .context("failed to reset state after logout")?;
+        bail!("operation failed because of logout: {msg}")
     }
 
-    async fn list_vpn(&mut self) -> Result<Vec<RespVpnInfo>, Error> {
+    async fn list_vpn(&mut self) -> Result<Vec<RespVpnInfo>> {
         let resp = self
             .request::<Vec<RespVpnInfo>>(ApiName::ListVPN, None)
             .await?;
         match resp.code {
-            0 => Ok(resp.data.unwrap()),
-            101 => Err(self.handle_logout_err(resp.message.unwrap()).await),
-            _ => Err(Error::Error(format!(
+            0 => resp.data.context("list vpn response missing data"),
+            101 => {
+                let msg = resp
+                    .message
+                    .unwrap_or_else(|| "logout required".to_string());
+                self.handle_logout_err(msg).await?;
+                unreachable!()
+            }
+            _ => bail!(format!(
                 "failed to list vpn with error {}: {}",
                 resp.code,
-                resp.message.unwrap()
-            ))),
+                resp.message.unwrap_or_default()
+            )),
         }
     }
 
@@ -576,7 +597,13 @@ impl Client {
         let mut fast_vpn = None;
         let mut min_latency = i64::MAX;
         for vpn in vpn_info {
-            let latency = self.ping_vpn(vpn.ip.clone(), vpn.api_port).await;
+            let latency = match self.ping_vpn(vpn.ip.clone(), vpn.api_port).await {
+                Ok(latency) => latency,
+                Err(err) => {
+                    log::warn!("failed to ping {}:{}: {}", vpn.ip, vpn.api_port, err);
+                    -1
+                }
+            };
 
             log::info!(
                 "server name {}{}",
@@ -596,7 +623,13 @@ impl Client {
 
     async fn get_first_available_vpn(&mut self, vpn_info: Vec<RespVpnInfo>) -> Option<RespVpnInfo> {
         for vpn in vpn_info {
-            let latency = self.ping_vpn(vpn.ip.clone(), vpn.api_port.clone()).await;
+            let latency = match self.ping_vpn(vpn.ip.clone(), vpn.api_port).await {
+                Ok(latency) => latency,
+                Err(err) => {
+                    log::warn!("failed to ping {}:{}: {}", vpn.ip, vpn.api_port, err);
+                    -1
+                }
+            };
             if latency != -1 {
                 return Some(vpn);
             }
@@ -604,58 +637,63 @@ impl Client {
         None
     }
 
-    // ping vpn and return latency in ms. Will return -1 on error
-    async fn ping_vpn(&mut self, ip: String, api_port: u16) -> i64 {
+    // ping vpn and return latency in ms. Will return Err on error
+    async fn ping_vpn(&mut self, ip: String, api_port: u16) -> Result<i64> {
         {
             // config cookie
-            let mut cookie = self.cookie.lock().unwrap();
-            let server_url = self.conf.server.clone().unwrap();
+            let mut cookie = self
+                .cookie
+                .lock()
+                .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
+            let server_url = self
+                .conf
+                .server
+                .as_ref()
+                .context("server url is required to ping vpn")?;
 
-            let mut url = Url::from_str(&server_url).unwrap();
+            let mut url = Url::from_str(server_url)
+                .with_context(|| format!("invalid server url: {server_url}"))?;
             let mut cookies: Vec<Cookie> = Vec::new();
             for c in cookie.iter_any() {
                 if c.domain.matches(&url.clone()) {
                     cookies.push(c.clone());
                 }
             }
-            url.set_host(Some(ip.as_str())).unwrap();
-            url.set_port(Some(api_port)).unwrap();
+            url.set_host(Some(ip.as_str()))
+                .context("failed to set ping host")?;
+            url.set_port(Some(api_port))
+                .or_else(|_| bail!("failed to set ping port"))?;
             for c in cookies {
                 let mut c = cookie::Cookie::new(c.name().to_string(), c.value().to_string());
                 c.set_domain(ip.clone());
-                let c = Cookie::try_from_raw_cookie(&c, &url.clone()).unwrap();
-                cookie.insert(c, &url.clone()).unwrap();
+                let c = Cookie::try_from_raw_cookie(&c, &url.clone())
+                    .context("failed to convert raw cookie")?;
+                cookie
+                    .insert(c, &url.clone())
+                    .context("failed to insert ping cookie")?;
             }
             self.api_url.vpn_param.url = url.to_string().trim_end_matches('/').to_string();
         }
-        self.save_cookie();
+        self.save_cookie()?;
         let req_start = Utc::now().timestamp_millis();
-        let result = self.request::<String>(ApiName::PingVPN, None).await;
+        let resp = self.request::<String>(ApiName::PingVPN, None).await?;
         let req_end = Utc::now().timestamp_millis();
         let latency = req_end - req_start;
-        match result {
-            Ok(resp) => match resp.code {
-                0 => return latency,
-                _ => {
-                    log::warn!(
-                        "failed to ping vpn with error {}: {}",
-                        resp.code,
-                        resp.message.unwrap()
-                    );
-                }
-            },
-            Err(err) => {
-                log::warn!("failed to ping {}:{}: {}", ip, api_port, err);
-            }
+        match resp.code {
+            0 => Ok(latency),
+            _ => bail!(format!(
+                "failed to ping vpn with error {}: {}",
+                resp.code,
+                resp.message.unwrap_or_default()
+            )),
         }
-        -1
     }
 
-    async fn fetch_peer_info(&mut self, public_key: &String) -> Result<RespWgInfo, Error> {
+    async fn fetch_peer_info(&mut self, public_key: &String) -> Result<RespWgInfo> {
         let mut otp = String::new();
         if let Some(code) = &self.conf.code {
             if !code.is_empty() {
-                let code = utils::b32_decode(code);
+                let code = utils::b32_decode(code)?;
                 let offset = self.date_offset_sec / TIME_STEP as i32;
                 let raw_otp = totp_offset(code.as_slice(), offset);
                 otp = format!("{:06}", raw_otp.code);
@@ -668,7 +706,7 @@ impl Client {
         }
         if otp.is_empty() {
             log::info!("input your 2fa code:");
-            otp = utils::read_line().await;
+            otp = utils::read_line().await?;
         }
         let mut m = Map::new();
         m.insert("public_key".to_string(), json!(public_key));
@@ -677,17 +715,23 @@ impl Client {
             .request::<RespWgInfo>(ApiName::ConnectVPN, Some(m))
             .await?;
         match resp.code {
-            0 => Ok(resp.data.unwrap()),
-            101 => Err(self.handle_logout_err(resp.message.unwrap()).await),
-            _ => Err(Error::Error(format!(
+            0 => resp.data.context("connect vpn response missing data"),
+            101 => {
+                let msg = resp
+                    .message
+                    .unwrap_or_else(|| "logout required".to_string());
+                self.handle_logout_err(msg).await?;
+                unreachable!()
+            }
+            _ => bail!(format!(
                 "failed to fetch peer info with error {}: {}",
                 resp.code,
-                resp.message.unwrap()
-            ))),
+                resp.message.unwrap_or_default()
+            )),
         }
     }
 
-    pub async fn connect_vpn(&mut self) -> Result<WgConf, Error> {
+    pub async fn connect_vpn(&mut self) -> Result<WgConf> {
         let vpn_info = self.list_vpn().await?;
 
         log::info!(
@@ -734,27 +778,43 @@ impl Client {
             Some(strategy) => match strategy.as_str() {
                 STRATEGY_LATENCY => self.get_first_vpn_by_latency(filtered_vpn).await,
                 STRATEGY_DEFAULT => self.get_first_available_vpn(filtered_vpn).await,
-                _ => return Err(Error::Error("unsupported strategy".to_string())),
+                _ => bail!("unsupported strategy"),
             },
             None => self.get_first_available_vpn(filtered_vpn).await,
         };
 
         let vpn = match vpn {
             Some(ref vpn) => vpn,
-            None => return Err(Error::Error("no vpn available".to_string())),
+            None => bail!("no vpn available"),
         };
         let vpn_addr = format!("{}:{}", vpn.ip, vpn.vpn_port);
         log::info!("try connect to {}, address {}", vpn.en_name, vpn_addr);
 
-        let key = self.conf.public_key.clone().unwrap();
+        let key = self
+            .conf
+            .public_key
+            .as_ref()
+            .context("public key missing in config")?
+            .clone();
         log::info!("try to get wg conf from remote");
         let wg_info = self.fetch_peer_info(&key).await?;
         let mtu = wg_info.setting.vpn_mtu;
         let dns = wg_info.setting.vpn_dns;
         let peer_key = wg_info.public_key;
-        let public_key = self.conf.public_key.clone().unwrap();
-        let private_key = self.conf.private_key.clone().unwrap();
-        let address = format!("{}/{}", wg_info.ip, wg_info.ip_mask.parse::<u32>().unwrap());
+        let public_key = self
+            .conf
+            .public_key
+            .as_ref()
+            .context("public key missing in config")?
+            .clone();
+        let private_key = self
+            .conf
+            .private_key
+            .as_ref()
+            .context("private key missing in config")?
+            .clone();
+        let ip_mask = wg_info.ip_mask.parse::<u32>().context("invalid ip mask")?;
+        let address = format!("{}/{}", wg_info.ip, ip_mask);
         let address6 = (!wg_info.ipv6.is_empty())
             .then_some(format!("{}/128", wg_info.ipv6))
             .unwrap_or("".into());
@@ -799,7 +859,7 @@ impl Client {
         }
     }
 
-    pub async fn report_vpn_status(&mut self, conf: &WgConf) -> Result<(), Error> {
+    pub async fn report_vpn_status(&mut self, conf: &WgConf) -> Result<()> {
         let mut m = Map::new();
         m.insert("ip".to_string(), json!(conf.address));
         m.insert("public_key".to_string(), json!(conf.public_key));
@@ -811,15 +871,15 @@ impl Client {
             .await?;
         match resp.code {
             0 => Ok(()),
-            _ => Err(Error::Error(format!(
+            _ => bail!(format!(
                 "failed to report connection with error {}: {}",
                 resp.code,
-                resp.message.unwrap()
-            ))),
+                resp.message.unwrap_or_default()
+            )),
         }
     }
 
-    pub async fn disconnect_vpn(&mut self, wg_conf: &WgConf) -> Result<(), Error> {
+    pub async fn disconnect_vpn(&mut self, wg_conf: &WgConf) -> Result<()> {
         let mut m = Map::new();
         m.insert("ip".to_string(), json!(wg_conf.address));
         m.insert("public_key".to_string(), json!(wg_conf.public_key));
@@ -830,11 +890,11 @@ impl Client {
             .await?;
         match resp.code {
             0 => Ok(()),
-            _ => Err(Error::Error(format!(
+            _ => bail!(format!(
                 "failed to fetch peer info with error {}: {}",
                 resp.code,
-                resp.message.unwrap()
-            ))),
+                resp.message.unwrap_or_default()
+            )),
         }
     }
 }
