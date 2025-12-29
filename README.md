@@ -64,6 +64,14 @@ windows 中启动 `wg-go` 需要 [wintun](6) 支持，请到官网下载，并�
 macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需要将配置文件中的 `interface_name` 改为符合正则的名字，例如 `utun12345`  
 另外， `utun` 后的数字类型应该是 `int16` ，如果大于 `32767` 会报错 `Failed to create TUN device: invalid argument` 。具体参考 [#46](https://github.com/PinkD/corplink-rs/issues/46)
 
+## log level 配置
+
+本项目使用 [env_logger](https://docs.rs/env_logger/latest/env_logger/) 作为 log 库，修改 log level 需要使用环境变量，示例：
+
+```bash
+RUST_LOG=debug ./corplink-rs config.json
+```
+
 # 配置文件实例
 
 最小配置
@@ -192,6 +200,11 @@ graph TD;
 
 # Changelog
 
+- 0.5.4
+  - fix memory leak in unsafe code
+  - refactor error handling with `anyhow`
+  - fix default log level
+  - add ci for push event(@yanyongyu)
 - 0.5.3
   - remove keep-alive api call
 - 0.5.2
@@ -268,7 +281,8 @@ graph TD;
 # License
 
 ```license
- Copyright (C) 2023  PinkD, ShuNing, LionheartLann, XYenon, Verge, jixiuf, simpleapples, overvenus, fanwenlin, hexchain, ManiaciaChao
+ Copyright (C) 2023  PinkD, ShuNing, LionheartLann, XYenon, Verge, jixiuf,
+ simpleapples, overvenus, fanwenlin, hexchain, ManiaciaChao, yanyongyu
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
