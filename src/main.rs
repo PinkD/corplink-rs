@@ -70,7 +70,7 @@ async fn main() {
 async fn run() -> Result<()> {
     // NOTE: If you want to debug, you should set `RUST_LOG` env to `debug` and run corplink-rs in root
     //  because `check_privilege` will call sudo and drop env if you're not root
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     print_version();
     check_privilege();
