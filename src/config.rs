@@ -27,6 +27,25 @@ pub const PLATFORM_AAD: &str = "aad";
 pub const STRATEGY_LATENCY: &str = "latency";
 pub const STRATEGY_DEFAULT: &str = "default";
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum RouteMode {
+    /// Only intranet routes returned by the server (mimics official split mode).
+    #[default]
+    Split,
+    /// Full-tunnel routes from the server (typically 0.0.0.0/0, ::/0).
+    Full,
+}
+
+impl fmt::Display for RouteMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RouteMode::Split => write!(f, "split"),
+            RouteMode::Full => write!(f, "full"),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub company_name: String,
@@ -48,6 +67,8 @@ pub struct Config {
     pub vpn_select_strategy: Option<String>,
     pub use_vpn_dns: Option<bool>,
     pub auto_setup_routes: Option<bool>,
+    /// "split" (default) or "full". Selects which route list from the server to apply.
+    pub route_mode: Option<RouteMode>,
 }
 
 impl fmt::Display for Config {

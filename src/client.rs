@@ -818,11 +818,34 @@ impl Client {
         let address6 = (!wg_info.ipv6.is_empty())
             .then_some(format!("{}/128", wg_info.ipv6))
             .unwrap_or("".into());
-        let allowed_ips = [
-            wg_info.setting.vpn_route_split,
-            wg_info.setting.v6_route_split.unwrap_or_default(),
-        ]
-        .concat();
+        let allowed_ips = match self.conf.route_mode.clone().unwrap_or_default() {
+            crate::config::RouteMode::Split => {
+                log::info!("route_mode = split");
+                [
+                    wg_info.setting.vpn_route_split,
+                    wg_info.setting.v6_route_split.unwrap_or_default(),
+                ]
+                .concat()
+            }
+            crate::config::RouteMode::Full => {
+                log::info!("route_mode = full");
+                let mut v4 = wg_info.setting.vpn_route_full;
+                let mut v6 = wg_info.setting.v6_route_full.unwrap_or_default();
+                if v4.is_empty() {
+                    log::warn!(
+                        "route_mode=full but vpn_route_full is empty, falling back to 0.0.0.0/0"
+                    );
+                    v4.push("0.0.0.0/0".to_string());
+                }
+                if v6.is_empty() {
+                    log::warn!(
+                        "route_mode=full but v6_route_full is empty, falling back to ::/0"
+                    );
+                    v6.push("::/0".to_string());
+                }
+                [v4, v6].concat()
+            }
+        };
         let auto_setup_routes = self.conf.auto_setup_routes.unwrap_or(true);
         let routes = if auto_setup_routes {
             allowed_ips.clone()
@@ -871,7 +894,13 @@ impl Client {
         let mut m = Map::new();
         m.insert("ip".to_string(), json!(conf.address));
         m.insert("public_key".to_string(), json!(conf.public_key));
-        m.insert("mode".to_string(), json!("Split"));
+        m.insert(
+            "mode".to_string(),
+            json!(match self.conf.route_mode.clone().unwrap_or_default() {
+                crate::config::RouteMode::Split => "Split",
+                crate::config::RouteMode::Full => "Full",
+            }),
+        );
         m.insert("type".to_string(), json!("100"));
 
         let resp = self
@@ -891,7 +920,13 @@ impl Client {
         let mut m = Map::new();
         m.insert("ip".to_string(), json!(wg_conf.address));
         m.insert("public_key".to_string(), json!(wg_conf.public_key));
-        m.insert("mode".to_string(), json!("Split"));
+        m.insert(
+            "mode".to_string(),
+            json!(match self.conf.route_mode.clone().unwrap_or_default() {
+                crate::config::RouteMode::Split => "Split",
+                crate::config::RouteMode::Full => "Full",
+            }),
+        );
         m.insert("type".to_string(), json!("101"));
         let resp = self
             .request::<Map<String, Value>>(ApiName::DisconnectVPN, Some(m))

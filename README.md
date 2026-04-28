@@ -128,7 +128,12 @@ RUST_LOG=debug ./corplink-rs config.json
   "use_vpn_dns": false,
   // automatically setup system routes (default: true)
   // set to false if you want to manually configure routes
-  "auto_setup_routes": true
+  "auto_setup_routes": true,
+  // route mode: "split" (default) or "full"
+  // - split: use intranet routes from server (same as official split mode)
+  // - full:  use full-tunnel routes from server (0.0.0.0/0, ::/0)
+  //          often combined with "auto_setup_routes": false in container/gateway setups
+  "route_mode": "split"
 }
 ```
 
