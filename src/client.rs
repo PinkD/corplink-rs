@@ -831,6 +831,16 @@ impl Client {
                 log::info!("route_mode = full");
                 let mut v4 = wg_info.setting.vpn_route_full;
                 let mut v6 = wg_info.setting.v6_route_full.unwrap_or_default();
+                log::info!(
+                    "route_mode=full, server returned vpn_route_full ({} entries): {:?}",
+                    v4.len(),
+                    v4
+                );
+                log::info!(
+                    "route_mode=full, server returned v6_route_full ({} entries): {:?}",
+                    v6.len(),
+                    v6
+                );
                 if v4.is_empty() {
                     log::warn!(
                         "route_mode=full but vpn_route_full is empty, falling back to 0.0.0.0/0"
@@ -843,7 +853,13 @@ impl Client {
                     );
                     v6.push("::/0".to_string());
                 }
-                [v4, v6].concat()
+                let merged = [v4, v6].concat();
+                log::info!(
+                    "route_mode=full, merged allowed_ips ({} entries): {:?}",
+                    merged.len(),
+                    merged
+                );
+                merged
             }
         };
         let auto_setup_routes = self.conf.auto_setup_routes.unwrap_or(true);
