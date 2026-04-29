@@ -69,6 +69,10 @@ pub struct Config {
     pub auto_setup_routes: Option<bool>,
     /// "split" (default) or "full". Selects which route list from the server to apply.
     pub route_mode: Option<RouteMode>,
+    /// Optional list of CIDR routes to exclude from AllowedIPs / system routes.
+    /// Useful in full mode to punch holes for local LAN or the VPN peer IP itself,
+    /// avoiding routing loops (e.g. 192.168.1.0/24, 10.0.0.5/32).
+    pub vpn_disallowed_routes: Option<Vec<String>>,
 }
 
 impl fmt::Display for Config {

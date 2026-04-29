@@ -131,9 +131,13 @@ RUST_LOG=debug ./corplink-rs config.json
   "auto_setup_routes": true,
   // route mode: "split" (default) or "full"
   // - split: use intranet routes from server (same as official split mode)
-  // - full:  use full-tunnel routes from server (0.0.0.0/0, ::/0)
+  // - full:  use full-tunnel routes from server
   //          often combined with "auto_setup_routes": false in container/gateway setups
-  "route_mode": "split"
+  "route_mode": "split",
+  // optional: CIDR routes to exclude from AllowedIPs (and system routes).
+  // useful in full mode to punch holes for local LAN or the VPN peer IP itself
+  // to avoid routing loops that would otherwise black-hole all traffic.
+  "vpn_disallowed_routes": ["192.168.1.0/24"]
 }
 ```
 

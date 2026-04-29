@@ -818,7 +818,7 @@ impl Client {
         let address6 = (!wg_info.ipv6.is_empty())
             .then_some(format!("{}/128", wg_info.ipv6))
             .unwrap_or("".into());
-        let allowed_ips = match self.conf.route_mode.clone().unwrap_or_default() {
+        let mut allowed_ips = match self.conf.route_mode.clone().unwrap_or_default() {
             crate::config::RouteMode::Split => {
                 log::info!("route_mode = split");
                 [
@@ -829,8 +829,8 @@ impl Client {
             }
             crate::config::RouteMode::Full => {
                 log::info!("route_mode = full");
-                let mut v4 = wg_info.setting.vpn_route_full;
-                let mut v6 = wg_info.setting.v6_route_full.unwrap_or_default();
+                let v4 = wg_info.setting.vpn_route_full;
+                let v6 = wg_info.setting.v6_route_full.unwrap_or_default();
                 log::info!(
                     "route_mode=full, server returned vpn_route_full ({} entries): {:?}",
                     v4.len(),
@@ -841,27 +841,35 @@ impl Client {
                     v6.len(),
                     v6
                 );
-                if v4.is_empty() {
-                    log::warn!(
-                        "route_mode=full but vpn_route_full is empty, falling back to 0.0.0.0/0"
+                if v4.is_empty() && v6.is_empty() {
+                    bail!(
+                        "route_mode=full but server returned no routes (vpn_route_full / v6_route_full both empty); \
+                         refuse to fall back to 0.0.0.0/0 to avoid peer-IP routing loop that blocks all traffic"
                     );
-                    v4.push("0.0.0.0/0".to_string());
                 }
-                if v6.is_empty() {
-                    log::warn!(
-                        "route_mode=full but v6_route_full is empty, falling back to ::/0"
-                    );
-                    v6.push("::/0".to_string());
-                }
-                let merged = [v4, v6].concat();
-                log::info!(
-                    "route_mode=full, merged allowed_ips ({} entries): {:?}",
-                    merged.len(),
-                    merged
-                );
-                merged
+                [v4, v6].concat()
             }
         };
+
+        // Filter out user-configured disallowed routes to avoid routing loops
+        // (e.g. peer VPN server IP, local LAN segments). Matches by exact CIDR string.
+        if let Some(disallowed) = self.conf.vpn_disallowed_routes.as_ref() {
+            if !disallowed.is_empty() {
+                let before = allowed_ips.len();
+                allowed_ips.retain(|r| !disallowed.contains(r));
+                log::info!(
+                    "vpn_disallowed_routes applied: {} -> {} entries (removed: {:?})",
+                    before,
+                    allowed_ips.len(),
+                    disallowed
+                );
+            }
+        }
+        log::info!(
+            "final allowed_ips ({} entries): {:?}",
+            allowed_ips.len(),
+            allowed_ips
+        );
         let auto_setup_routes = self.conf.auto_setup_routes.unwrap_or(true);
         let routes = if auto_setup_routes {
             allowed_ips.clone()
