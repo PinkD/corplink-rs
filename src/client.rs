@@ -277,6 +277,42 @@ impl Client {
         }
     }
 
+    /// Poll `check_tps_token` until the user completes third-party auth, or timeout.
+    ///
+    /// Replaces the old `press enter if you finish auth` / stdin-blocking flow, which
+    /// (a) requires an attached TTY — in containers without one, stdin returns EOF
+    /// immediately and the check fires before the user could possibly authorize,
+    /// and (b) is tedious even with a TTY. Standard OAuth device-flow pattern: show
+    /// the URL, then the client polls the "has the user confirmed yet?" endpoint.
+    async fn wait_for_tps_auth(&mut self, token: &String) -> Result<String> {
+        const POLL_INTERVAL: Duration = Duration::from_secs(3);
+        const POLL_TIMEOUT: Duration = Duration::from_secs(300);
+        let deadline = tokio::time::Instant::now() + POLL_TIMEOUT;
+        let mut attempts: u32 = 0;
+        loop {
+            attempts += 1;
+            match self.check_tps_token(token).await {
+                Ok(url) => {
+                    log::info!("third-party auth completed after {attempts} attempt(s)");
+                    return Ok(url);
+                }
+                Err(e) => {
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
+                        return Err(e.context(format!(
+                            "third-party auth not completed within {}s ({} polls)",
+                            POLL_TIMEOUT.as_secs(),
+                            attempts
+                        )));
+                    }
+                    log::debug!("tps token check attempt {attempts} not ready: {e}");
+                    let remaining = deadline - now;
+                    tokio::time::sleep(POLL_INTERVAL.min(remaining)).await;
+                }
+            }
+        }
+    }
+
     async fn get_otp_uri_from_tps(
         &mut self,
         method: &str,
@@ -291,10 +327,10 @@ impl Client {
         }
         match method {
             PLATFORM_LARK | PLATFORM_OIDC => {
-                log::info!("press enter if you finish auth");
-                let stdin = io::stdin();
-                stdin.lines().next();
-                self.check_tps_token(token).await
+                log::info!(
+                    "waiting for third-party auth (polling every 3s, up to 5min)..."
+                );
+                self.wait_for_tps_auth(token).await
             }
             _ => {
                 // TODO: add all tps login support
