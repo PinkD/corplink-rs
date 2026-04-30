@@ -128,7 +128,20 @@ RUST_LOG=debug ./corplink-rs config.json
   "use_vpn_dns": false,
   // automatically setup system routes (default: true)
   // set to false if you want to manually configure routes
-  "auto_setup_routes": true
+  "auto_setup_routes": true,
+  // route mode: "split" (default) or "full"
+  // - split: use intranet routes from server (same as official split mode)
+  // - full:  use full-tunnel routes from server
+  //          often combined with "auto_setup_routes": false in container/gateway setups
+  "route_mode": "split",
+  // optional: list of CIDRs to carve out of AllowedIPs (and system routes).
+  // applied as CIDR subtraction: each entry is subtracted from every route
+  // returned by the server, so listing a smaller range like "10.68.0.0/16"
+  // still punches a hole even when the server returns a supernet like
+  // "0.0.0.0/0" (full-tunnel). useful for keeping local LAN traffic off the
+  // VPN, and for excluding the VPN peer endpoint IP to avoid a routing loop
+  // that would otherwise black-hole all traffic.
+  "vpn_disallowed_routes": ["192.168.1.0/24"]
 }
 ```
 
