@@ -851,17 +851,66 @@ impl Client {
             }
         };
 
-        // Filter out user-configured disallowed routes to avoid routing loops
-        // (e.g. peer VPN server IP, local LAN segments). Matches by exact CIDR string.
+        // Carve user-specified CIDRs out of allowed_ips. This removes any IPs in
+        // vpn_disallowed_routes from the VPN's AllowedIPs (and the system routes
+        // derived from them), which is the standard way to avoid routing loops in
+        // full-tunnel mode — e.g. listing the local LAN or a CIDR covering the
+        // VPN peer endpoint so their packets don't get captured by the tunnel.
+        //
+        // Semantics: CIDR subtraction. An entry like "10.68.0.0/16" carves that
+        // whole range out of each allowed_ip, even when allowed_ip is a larger
+        // supernet such as "0.0.0.0/0" — which expands to a minimal set of
+        // smaller CIDRs covering "allowed minus disallowed".
         if let Some(disallowed) = self.conf.vpn_disallowed_routes.as_ref() {
             if !disallowed.is_empty() {
                 let before = allowed_ips.len();
-                allowed_ips.retain(|r| !disallowed.contains(r));
+                for d in disallowed {
+                    let mut carved = Vec::with_capacity(allowed_ips.len());
+                    for a in &allowed_ips {
+                        carved.extend(crate::utils::subtract_cidr_from_cidr(a, d));
+                    }
+                    allowed_ips = carved;
+                }
                 log::info!(
-                    "vpn_disallowed_routes applied: {} -> {} entries (removed: {:?})",
+                    "vpn_disallowed_routes applied: {} -> {} entries (carved: {:?})",
                     before,
                     allowed_ips.len(),
                     disallowed
+                );
+            }
+        }
+
+        // Auto-carve the VPN peer endpoint IP out of allowed_ips. In full-tunnel mode
+        // the server typically returns 0.0.0.0/0, which would match the outer UDP
+        // packets going to the peer itself, producing a routing loop (black hole).
+        // Mirrors wg-quick's behavior of excluding the endpoint from routes. No-op
+        // when the peer IP isn't covered by any allowed_ip (e.g. split mode).
+        match vpn.ip.parse::<std::net::IpAddr>() {
+            Ok(peer_ip) => {
+                let peer_cidr = match peer_ip {
+                    std::net::IpAddr::V4(_) => format!("{}/32", peer_ip),
+                    std::net::IpAddr::V6(_) => format!("{}/128", peer_ip),
+                };
+                let before = allowed_ips.len();
+                let mut carved = Vec::with_capacity(allowed_ips.len());
+                for a in &allowed_ips {
+                    carved.extend(crate::utils::subtract_cidr_from_cidr(a, &peer_cidr));
+                }
+                if carved.len() != before {
+                    log::info!(
+                        "auto-carved peer endpoint {} out of allowed_ips: {} -> {} entries",
+                        peer_cidr,
+                        before,
+                        carved.len()
+                    );
+                }
+                allowed_ips = carved;
+            }
+            Err(e) => {
+                log::warn!(
+                    "could not parse vpn.ip {:?} as IP, skipping peer-IP carve-out: {}",
+                    vpn.ip,
+                    e
                 );
             }
         }
