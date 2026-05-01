@@ -13,7 +13,7 @@ mod wg;
 #[cfg(windows)]
 use is_elevated;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use dns::DNSManager;
 
 use std::env;
@@ -84,8 +84,10 @@ async fn run() -> Result<()> {
         .clone()
         .context("interface name missing in config")?;
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let use_vpn_dns = conf.use_vpn_dns.unwrap_or(false);
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let dns_backup_filename = conf.dns_backup_filename.clone();
 
     if conf.server.is_none() {
         let resp = client::get_company_url(conf.company_name.as_str())
@@ -147,10 +149,10 @@ async fn run() -> Result<()> {
         .await
         .with_context(|| format!("failed to config interface with uapi for {name}"))?;
 
-    #[cfg(target_os = "macos")]
-    let mut dns_manager = DNSManager::new();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let mut dns_manager = DNSManager::new(dns_backup_filename);
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if use_vpn_dns {
         match dns_manager.set_dns(vec![&wg_conf.dns], vec![]) {
             Ok(_) => {}
@@ -195,7 +197,7 @@ async fn run() -> Result<()> {
 
     wg::stop_wg_go();
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if use_vpn_dns {
         match dns_manager.restore_dns() {
             Ok(_) => {}
