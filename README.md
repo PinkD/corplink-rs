@@ -123,9 +123,14 @@ RUST_LOG=debug ./corplink-rs config.json
   // latency: choose the server with the lowest latency
   // default: choose the first available server
   "vpn_select_strategy": "latency",
-  // use vpn dns for macos
+  // use vpn dns (macOS: networksetup; Linux: rename /etc/resolv.conf aside
+  //   and write a new one with the VPN-provided nameserver)
   // NOTE: if process doesn't exit gracefully, your dns may not be restored
   "use_vpn_dns": false,
+  // optional: filename for the Linux backup of /etc/resolv.conf.
+  // Default "resolv.conf.corplink", always placed next to /etc/resolv.conf.
+  // macOS ignores this field.
+  "dns_backup_filename": null,
   // automatically setup system routes (default: true)
   // set to false if you want to manually configure routes
   "auto_setup_routes": true,
