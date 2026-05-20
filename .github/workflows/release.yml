@@ -128,7 +128,8 @@ jobs:
         run: |
           Move-Item -Path "target/release/corplink-rs.exe" -Destination "."
           Move-Item -Path "config/config.json" -Destination "."
-          Compress-Archive -Path corplink-rs.exe,config.json -Destination corplink-rs-${{ github.ref_name }}-windows.zip
+          Copy-Item -Path "scripts/setup.ps1" -Destination "."
+          Compress-Archive -Path corplink-rs.exe,config.json,setup.ps1 -Destination corplink-rs-${{ github.ref_name }}-windows.zip
       - name: upload package to artifact
         uses: actions/upload-artifact@v6
         with:

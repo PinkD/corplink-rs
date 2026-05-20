@@ -428,8 +428,9 @@ impl Client {
             }
             let otp_uri = otp_uri?;
             if otp_uri.is_empty() {
-                log::warn!("failed to login with method {method}");
-                continue;
+                log::info!("no otp code from server, will ask for 2fa code when connecting");
+                self.change_state(State::Login).await?;
+                return Ok(());
             }
             self.change_state(State::Login).await?;
 

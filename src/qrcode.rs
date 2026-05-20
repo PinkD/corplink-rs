@@ -9,8 +9,13 @@ pub struct TerminalQrCode {
 
 impl TerminalQrCode {
     pub fn from_bytes<D: AsRef<[u8]>>(data: D) -> Result<TerminalQrCode, anyhow::Error> {
-        let code: QrCode = QrCode::with_version(data.as_ref(), Version::Normal(20), EcLevel::L)?;
-        Ok(TerminalQrCode { code })
+        let data = data.as_ref();
+        for v in [20i16, 25, 30, 35, 40] {
+            if let Ok(code) = QrCode::with_version(data, Version::Normal(v), EcLevel::L) {
+                return Ok(TerminalQrCode { code });
+            }
+        }
+        Err(anyhow::anyhow!("data too long for QR code (max version 40)"))
     }
 
     pub fn print(&self) {
