@@ -34,7 +34,25 @@ mv target/release/corplink-rs /usr/bin/
 
 ### windows
 
-参考 [#34](https://github.com/PinkD/corplink-rs/issues/34)
+**前提**: 需要 Go (≥1.22)、GCC (MinGW-w64)、make、Rust (GNU 工具链)。
+
+安装工具链后，在 **PowerShell** 中执行：
+
+```powershell
+# 1. 构建 libwg（生成 libwg.a + libwg.h）
+cd libwg
+.\build.ps1
+
+# 2. 构建 Rust 项目
+cd ..
+rustup toolchain install stable-gnu
+rustup default stable-x86_64-pc-windows-gnu
+cargo build --release
+```
+
+> 编译的 `build.ps1` 会调用 `make libwg`，该目标会以 `CGO_ENABLED=1` 编译 Go 代码。
+> MinGW GCC 需要在 PATH 中，且 make 需要支持 bash 风格环境变量语法。
+> 也可在 MSYS2 UCRT64 环境中执行 `./build.sh`（同样需要 Go + GCC）。
 
 # 用法
 
@@ -55,9 +73,50 @@ systemctl enable corplink-rs.service
 systemctl start corplink-rs@test.service
 ```
 
-## windows 特殊说明
+## windows 使用说明
 
-windows 中启动 `wg-go` 需要 [wintun](6) 支持，请到官网下载，并将 `wintun.dll` 与 `corplink-rs` 放到同一目录下(或者环境变量下)
+### 快速开始（推荐使用预编译版本）
+
+1. 从 [Releases](https://github.com/Ben8368/corplink-rs/releases) 下载 `corplink-rs-*-windows.zip`
+2. 解压到任意目录
+3. 运行 `setup.ps1` 自动获取 `wintun.dll`：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup.ps1
+```
+
+4. 编辑 `config.json`，填入公司代码和登录信息（见下方配置文件实例）
+5. 以**管理员身份**打开 PowerShell，运行：
+
+```powershell
+.\corplink-rs.exe config.json
+
+# 调试模式
+$env:RUST_LOG="debug"; .\corplink-rs.exe config.json
+```
+
+### wintun.dll 说明
+
+`corplink-rs` 依赖 [Wintun][6] 虚拟网卡驱动来创建 WireGuard 隧道。由于 Wintun 的许可证要求用户从[官网][6]直接获取，我们无法在 release 包中附带该文件。
+
+`setup.ps1` 脚本会自动从 `wintun.net` 下载并解压 `amd64` 版本的 `wintun.dll` 到当前目录。
+
+手动获取：访问 [wintun.net][6]，下载 zip 包，将 `bin/amd64/wintun.dll` 复制到 `corplink-rs.exe` 所在目录。
+
+### 管理员权限
+
+程序需要管理员权限，原因：
+- `wg-go` 需要创建 TUN 虚拟网卡
+- 配置系统路由表（自动添加 VPN 路由）
+
+如果运行时提示 `please run as administrator`，右键 PowerShell 选择"以管理员身份运行"。
+
+### 常见问题
+
+- **wintun.dll 找不到**：运行 `setup.ps1` 或手动下载放入同目录
+- **配置文件 JSON 不支持注释**：示例中的 `// comment` 需要删除
+- **Windows 上的 `conf_dir`**：`/etc/wireguard` 是 Linux 路径，Windows 会忽略此配置项
+- **路由未生效**：检查是否以管理员运行，关闭其他 VPN 软件避免路由冲突
 
 ## macos 特殊说明
 
