@@ -77,7 +77,7 @@ systemctl start corplink-rs@test.service
 
 ### 快速开始（推荐使用预编译版本）
 
-1. 从 [Releases](https://github.com/Ben8368/corplink-rs/releases) 下载 `corplink-rs-*-windows.zip`
+1. 从 [Releases](https://github.com/PinkD/corplink-rs/releases) 下载 `corplink-rs-*-windows.zip`
 2. 解压到任意目录
 3. 运行 `setup.ps1` 自动获取 `wintun.dll`：
 
@@ -115,7 +115,6 @@ $env:RUST_LOG="debug"; .\corplink-rs.exe config.json
 
 - **wintun.dll 找不到**：运行 `setup.ps1` 或手动下载放入同目录
 - **配置文件 JSON 不支持注释**：示例中的 `// comment` 需要删除
-- **Windows 上的 `conf_dir`**：`/etc/wireguard` 是 Linux 路径，Windows 会忽略此配置项
 - **路由未生效**：检查是否以管理员运行，关闭其他 VPN 软件避免路由冲突
 
 ## macos 特殊说明
