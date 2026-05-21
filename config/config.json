@@ -2,8 +2,5 @@
     "company_name": "company code name",
     "username": "your_name",
     "password": "your_pass",
-    // will generate corplink.conf
-    "conf_name": "corplink",
-    // will generate conf in /etc/wireguard
-    "conf_dir": "/etc/wireguard"
+    "platform": "feilian"
 }

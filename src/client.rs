@@ -428,8 +428,9 @@ impl Client {
             }
             let otp_uri = otp_uri?;
             if otp_uri.is_empty() {
-                log::warn!("failed to login with method {method}");
-                continue;
+                log::info!("no otp code from server, will ask for 2fa code when connecting");
+                self.change_state(State::Login).await?;
+                return Ok(());
             }
             self.change_state(State::Login).await?;
 
@@ -705,8 +706,16 @@ impl Client {
             }
         }
         if otp.is_empty() {
-            log::info!("input your 2fa code:");
-            otp = utils::read_line().await?;
+            let is_tps_login = matches!(
+                self.conf.platform.as_deref(),
+                Some(PLATFORM_LARK | PLATFORM_OIDC)
+            );
+            if is_tps_login {
+                log::info!("use empty 2fa code (tps login already verified)");
+            } else {
+                log::info!("input your 2fa code:");
+                otp = utils::read_line().await?;
+            }
         }
         let mut m = Map::new();
         m.insert("public_key".to_string(), json!(public_key));

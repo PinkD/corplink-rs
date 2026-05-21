@@ -2,6 +2,10 @@ use qrcode::{EcLevel, QrCode, Version};
 use terminal_graphics::Colour;
 use terminal_graphics::Display;
 
+const QR_MIN_VERSION: i16 = 20;
+const QR_MAX_VERSION: i16 = 40;
+const QR_VERSION_STEP: i16 = 4;
+
 #[derive(Clone)]
 pub struct TerminalQrCode {
     code: QrCode,
@@ -9,8 +13,18 @@ pub struct TerminalQrCode {
 
 impl TerminalQrCode {
     pub fn from_bytes<D: AsRef<[u8]>>(data: D) -> Result<TerminalQrCode, anyhow::Error> {
-        let code: QrCode = QrCode::with_version(data.as_ref(), Version::Normal(20), EcLevel::L)?;
-        Ok(TerminalQrCode { code })
+        let data = data.as_ref();
+        let mut v = QR_MIN_VERSION;
+        loop {
+            if let Ok(code) = QrCode::with_version(data, Version::Normal(v), EcLevel::L) {
+                return Ok(TerminalQrCode { code });
+            }
+            if v >= QR_MAX_VERSION {
+                break;
+            }
+            v += QR_VERSION_STEP;
+        }
+        Err(anyhow::anyhow!("data too long for QR code (max version {QR_MAX_VERSION})"))
     }
 
     pub fn print(&self) {
