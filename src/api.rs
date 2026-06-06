@@ -16,12 +16,18 @@ const URL_GET_CORPLINK_LOGIN_METHOD: &str = "{{url}}/api/lookup?os={{os}}&os_ver
 const URL_REQUEST_CODE: &str = "{{url}}/api/login/code/send?os={{os}}&os_version={{version}}";
 const URL_VERIFY_CODE: &str = "{{url}}/api/login/code/verify?os={{os}}&os_version={{version}}";
 const URL_LOGIN_PASSWORD: &str = "{{url}}/api/login?os={{os}}&os_version={{version}}";
+const URL_LOGIN_PASSWORD_V1: &str =
+    "{{url}}/api/v1/login?os={{os}}&os_version={{version}}&client_source=FeiLian";
 const URL_LIST_VPN: &str = "{{url}}/api/vpn/list?os={{os}}&os_version={{version}}";
 
 const URL_PING_VPN_HOST: &str = "{{url}}/vpn/ping?os={{os}}&os_version={{version}}";
 const URL_FETCH_PEER_INFO: &str = "{{url}}/vpn/conn?os={{os}}&os_version={{version}}";
 const URL_OPERATE_VPN: &str = "{{url}}/vpn/report?os={{os}}&os_version={{version}}";
 const URL_OTP: &str = "{{url}}/api/v2/p/otp?os={{os}}&os_version={{version}}";
+// log out the current terminal so it frees the server-side session/terminal
+// quota. logout_all=false only signs out this device. responds with a 302.
+const URL_LOGOUT: &str =
+    "{{url}}/api/logout?os={{os}}&os_version={{version}}&logout_all=false";
 
 #[derive(Clone, Hash, Eq, PartialEq, Debug)]
 pub enum ApiName {
@@ -31,6 +37,7 @@ pub enum ApiName {
     CorplinkLoginMethod,
     RequestEmailCode,
     LoginPassword,
+    LoginPasswordV1,
     LoginEmail,
     ListVPN,
 
@@ -39,6 +46,7 @@ pub enum ApiName {
     KeepAliveVPN,
     DisconnectVPN,
     Otp,
+    Logout,
 }
 
 #[derive(Clone, Serialize)]
@@ -84,12 +92,17 @@ impl ApiUrl {
         api_template.insert(ApiName::RequestEmailCode, Template::new(URL_REQUEST_CODE));
         api_template.insert(ApiName::LoginEmail, Template::new(URL_VERIFY_CODE));
         api_template.insert(ApiName::LoginPassword, Template::new(URL_LOGIN_PASSWORD));
+        api_template.insert(
+            ApiName::LoginPasswordV1,
+            Template::new(URL_LOGIN_PASSWORD_V1),
+        );
         api_template.insert(ApiName::ListVPN, Template::new(URL_LIST_VPN));
         api_template.insert(ApiName::PingVPN, Template::new(URL_PING_VPN_HOST));
         api_template.insert(ApiName::ConnectVPN, Template::new(URL_FETCH_PEER_INFO));
         api_template.insert(ApiName::KeepAliveVPN, Template::new(URL_OPERATE_VPN));
         api_template.insert(ApiName::DisconnectVPN, Template::new(URL_OPERATE_VPN));
         api_template.insert(ApiName::Otp, Template::new(URL_OTP));
+        api_template.insert(ApiName::Logout, Template::new(URL_LOGOUT));
 
         Ok(ApiUrl {
             user_param: UserUrlParam {
@@ -120,8 +133,10 @@ impl ApiUrl {
             ApiName::RequestEmailCode => self.api_template[name].render(user_param),
             ApiName::LoginEmail => self.api_template[name].render(user_param),
             ApiName::LoginPassword => self.api_template[name].render(user_param),
+            ApiName::LoginPasswordV1 => self.api_template[name].render(user_param),
             ApiName::ListVPN => self.api_template[name].render(user_param),
             ApiName::Otp => self.api_template[name].render(user_param),
+            ApiName::Logout => self.api_template[name].render(user_param),
 
             ApiName::PingVPN => self.api_template[name].render(vpn_param),
             ApiName::ConnectVPN => self.api_template[name].render(vpn_param),

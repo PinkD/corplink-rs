@@ -48,6 +48,14 @@ pub struct RespLogin {
     pub url: String,
 }
 
+// response of the v1 login endpoint (/api/v1/login), e.g.
+// {"result":"success","next":{"action":"GoToLink","can_skip":false}}
+#[derive(serde::Deserialize, Debug)]
+pub struct RespLoginV1 {
+    #[serde(default)]
+    pub result: String,
+}
+
 #[derive(serde::Deserialize, Debug)]
 pub struct RespOtp {
     pub url: String,

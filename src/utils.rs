@@ -53,6 +53,31 @@ pub fn b64_decode_to_hex(s: &str) -> Result<String> {
     Ok(hex)
 }
 
+// Encrypt a password the way the official feilian client (v1 login, `/api/v1/login`)
+// does, reverse-engineered from `wireguard.Wireguard.encryptByAesCbc(generateFixedString(), pwd)`
+// in libgojni.so. Both key and IV are derived from fixed constants, so the output is
+// deterministic and acts as a stable password hash on the server side.
+//
+//   KEY = hex(md5("9007199254740991"))   -> 32 ascii bytes (AES-256 key)
+//   IV  = hex(sha1(KEY))[..16]            -> 16 ascii bytes
+//   out = lower_hex( AES-256-CBC(KEY, IV, PKCS7(password)) )
+pub fn feilian_v1_encrypt_password(password: &str) -> String {
+    use aes::Aes256;
+    use cbc::cipher::{block_padding::Pkcs7, generic_array::GenericArray, BlockEncryptMut, KeyIvInit};
+    use sha1::{Digest, Sha1};
+
+    let key = format!("{:x}", md5::compute(b"9007199254740991"));
+    let iv = hex::encode(Sha1::digest(key.as_bytes()));
+    let iv = &iv[..16];
+
+    let ct = cbc::Encryptor::<Aes256>::new(
+        GenericArray::from_slice(key.as_bytes()),
+        GenericArray::from_slice(iv.as_bytes()),
+    )
+    .encrypt_padded_vec_mut::<Pkcs7>(password.as_bytes());
+    hex::encode(ct)
+}
+
 /// Returns a list of CIDR strings covering all addresses in `outer` except those in `inner`.
 ///
 /// - Disjoint (no overlap) → `[outer]` unchanged.

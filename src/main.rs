@@ -111,6 +111,7 @@ async fn run() -> Result<()> {
     }
 
     let with_wg_log = conf.debug_wg.unwrap_or_default();
+    let platform = conf.platform.clone();
     let mut c = Client::new(conf).context("failed to initialize client")?;
     let mut logout_retry = true;
     let wg_conf: Option<WgConf>;
@@ -194,6 +195,16 @@ async fn run() -> Result<()> {
     if let Err(e) = c.disconnect_vpn(&wg_conf).await {
         log::warn!("failed to disconnect vpn: {}", e)
     };
+
+    // log out the current terminal to free its server-side session quota.
+    // only for feilian_v1 (v1 password) where re-login is non-interactive; doing
+    // this for SSO platforms would force an interactive re-auth on next run.
+    if platform.as_deref() == Some(config::PLATFORM_CORPLINK_V1) {
+        log::info!("logging out current terminal...");
+        if let Err(e) = c.logout().await {
+            log::warn!("failed to logout: {}", e)
+        };
+    }
 
     wg::stop_wg_go();
 

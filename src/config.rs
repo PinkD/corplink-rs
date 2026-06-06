@@ -12,6 +12,9 @@ const DEFAULT_INTERFACE_NAME: &str = "corplink";
 
 pub const PLATFORM_LDAP: &str = "ldap";
 pub const PLATFORM_CORPLINK: &str = "feilian";
+// new feilian login that uses the v1 API (/api/v1/login with an AES-encrypted
+// password), as served by the newer feilian backend. opt-in via config.
+pub const PLATFORM_CORPLINK_V1: &str = "feilian_v1";
 pub const PLATFORM_OIDC: &str = "OIDC";
 // aka feishu
 pub const PLATFORM_LARK: &str = "lark";
