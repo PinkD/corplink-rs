@@ -196,9 +196,7 @@ async fn run() -> Result<()> {
         log::warn!("failed to disconnect vpn: {}", e)
     };
 
-    // log out the current terminal to free its server-side session quota.
-    // only for feilian_v1 (v1 password) where re-login is non-interactive; doing
-    // this for SSO platforms would force an interactive re-auth on next run.
+    // only logout for feilian_v1
     if platform.as_deref() == Some(config::PLATFORM_CORPLINK_V1) {
         log::info!("logging out current terminal...");
         if let Err(e) = c.logout().await {

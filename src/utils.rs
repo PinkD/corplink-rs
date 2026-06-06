@@ -3,10 +3,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use anyhow::{anyhow, Context, Result};
 
+use aes::Aes256;
 use base32::Alphabet;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as base64;
+use cbc::cipher::{block_padding::Pkcs7, generic_array::GenericArray, BlockEncryptMut, KeyIvInit};
 use rand::rngs::OsRng;
+use sha1::{Digest, Sha1};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 pub async fn read_line() -> Result<String> {
@@ -62,10 +65,6 @@ pub fn b64_decode_to_hex(s: &str) -> Result<String> {
 //   IV  = hex(sha1(KEY))[..16]            -> 16 ascii bytes
 //   out = lower_hex( AES-256-CBC(KEY, IV, PKCS7(password)) )
 pub fn feilian_v1_encrypt_password(password: &str) -> String {
-    use aes::Aes256;
-    use cbc::cipher::{block_padding::Pkcs7, generic_array::GenericArray, BlockEncryptMut, KeyIvInit};
-    use sha1::{Digest, Sha1};
-
     let key = format!("{:x}", md5::compute(b"9007199254740991"));
     let iv = hex::encode(Sha1::digest(key.as_bytes()));
     let iv = &iv[..16];

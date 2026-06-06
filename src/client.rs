@@ -190,8 +190,6 @@ impl Client {
             Some(body) => {
                 let body = serde_json::to_string(&body)
                     .with_context(|| format!("failed to serialize request body for {api:?}"))?;
-                // the v1 login endpoint (and likely others) rejects the request with
-                // "参数错误" if the JSON body has no Content-Type, so set it explicitly.
                 self.c
                     .post(url)
                     .header(header::CONTENT_TYPE, "application/json")
