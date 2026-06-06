@@ -19,8 +19,8 @@ use sha2::Digest;
 
 use crate::api::{ApiName, ApiUrl, URL_GET_COMPANY};
 use crate::config::{
-    Config, WgConf, PLATFORM_CORPLINK, PLATFORM_LARK, PLATFORM_LDAP, PLATFORM_OIDC,
-    STRATEGY_DEFAULT, STRATEGY_LATENCY,
+    Config, WgConf, PLATFORM_CORPLINK, PLATFORM_CORPLINK_V1, PLATFORM_LARK, PLATFORM_LDAP,
+    PLATFORM_OIDC, STRATEGY_DEFAULT, STRATEGY_LATENCY,
 };
 use crate::qrcode::TerminalQrCode;
 use crate::resp::*;
@@ -190,7 +190,10 @@ impl Client {
             Some(body) => {
                 let body = serde_json::to_string(&body)
                     .with_context(|| format!("failed to serialize request body for {api:?}"))?;
-                self.c.post(url).body(body)
+                self.c
+                    .post(url)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(body)
             }
             None => self.c.get(url),
         };
@@ -214,10 +217,33 @@ impl Client {
                 break;
             }
         }
-        let resp = resp
-            .json::<Resp<T>>()
+        let text = resp
+            .text()
             .await
-            .with_context(|| format!("failed to parse response for api {api:?}"))?;
+            .with_context(|| format!("failed to read response body for api {api:?}"))?;
+        // Parse the envelope generically first. When the server-side session has
+        // expired the server returns a non-zero code (e.g. 101) with a `data`
+        // whose shape doesn't match T (ListVPN, for instance, gets an object where
+        // it expects an array). Deserializing straight into Resp<T> would fail here
+        // and bypass the code-based logout/retry handling, leaving a stale-session
+        // run dead with a confusing parse error. So only coerce `data` into T once
+        // we know code == 0; otherwise keep the code/message so callers can react.
+        let raw: Resp<Value> = serde_json::from_str(&text).with_context(|| {
+            format!("failed to parse response envelope for api {api:?}: {text}")
+        })?;
+        let data = match (raw.code, raw.data) {
+            (0, Some(v)) => Some(
+                serde_json::from_value::<T>(v)
+                    .with_context(|| format!("failed to parse response data for api {api:?}"))?,
+            ),
+            _ => None,
+        };
+        let resp = Resp::<T> {
+            code: raw.code,
+            message: raw.message,
+            data,
+            action: raw.action,
+        };
         log::debug!("api {:#?} resp: {:#?}", api, resp);
         Ok(resp)
     }
@@ -412,8 +438,74 @@ impl Client {
         Ok(String::new())
     }
 
+    // new feilian v1 login (/api/v1/login with AES-encrypted password).
+    // opt-in via `"platform": "feilian_v1"`; the old login paths are untouched.
+    async fn login_v1(&mut self) -> Result<()> {
+        let password = self
+            .conf
+            .password
+            .as_ref()
+            .filter(|p| !p.is_empty())
+            .context("platform feilian_v1 requires a password")?
+            .clone();
+        log::info!("try to login with platform feilian_v1");
+        let enc = utils::feilian_v1_encrypt_password(&password);
+        let mut m = Map::new();
+        m.insert("login_scene".to_string(), json!(PLATFORM_CORPLINK));
+        m.insert("account_type".to_string(), json!("userid"));
+        m.insert("account".to_string(), json!(&self.conf.username));
+        m.insert("password".to_string(), json!(enc));
+
+        let resp = self
+            .request::<RespLoginV1>(ApiName::LoginPasswordV1, Some(m))
+            .await?;
+        match resp.code {
+            0 => {
+                let data = resp.data.context("v1 login response missing data")?;
+                if data.result != "success" {
+                    bail!("v1 login returned unexpected result: {}", data.result);
+                }
+                log::info!("login success");
+                self.change_state(State::Login).await?;
+
+                // fetch the TOTP secret so 2fa codes can be generated locally,
+                // mirroring the legacy login() flow. the v1 backend serves the
+                // same /api/v2/p/otp endpoint and otpauth uri format.
+                match self.request_otp_code().await {
+                    Ok(otp_uri) if !otp_uri.is_empty() => {
+                        let url = Url::parse(&otp_uri).context("failed to parse otp uri")?;
+                        for (k, v) in url.query_pairs() {
+                            if k == "secret" {
+                                log::info!("got 2fa token: {}", &v);
+                                self.conf.code = Some(v.to_string());
+                                self.conf.save().await?;
+                                break;
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        log::info!(
+                            "no otp code from server, will ask for 2fa code when connecting"
+                        );
+                    }
+                    Err(e) => log::warn!("failed to get otp code: {e}"),
+                }
+                Ok(())
+            }
+            _ => {
+                let msg = resp
+                    .message
+                    .unwrap_or_else(|| "v1 login failed".to_string());
+                bail!(msg)
+            }
+        }
+    }
+
     // choose right login method and login
     pub async fn login(&mut self) -> Result<()> {
+        if self.conf.platform.as_deref() == Some(PLATFORM_CORPLINK_V1) {
+            return self.login_v1().await;
+        }
         let resp = self.get_login_method().await?;
         let tps_login_resp = self.get_tps_login_method().await?;
         let mut tps_login = HashMap::new();
@@ -1021,5 +1113,41 @@ impl Client {
                 resp.message.unwrap_or_default()
             )),
         }
+    }
+
+    // log out the current terminal, freeing its server-side session/terminal
+    // quota (servers cap concurrent terminals, e.g. nankai allows only 3).
+    // best-effort: callers treat failures as non-fatal since we're exiting.
+    pub async fn logout(&mut self) -> Result<()> {
+        let url = self.api_url.get_api_url(&ApiName::Logout);
+        let mut req = self.c.get(url);
+        // /api/logout validates a csrf-token header (double-submit against the
+        // cookie). the token is only known after login, so read it from the
+        // cookie store here rather than relying on the default headers.
+        if let Some(server) = self.conf.server.as_ref() {
+            if let Ok(server_url) = Url::parse(server) {
+                if let Some(domain) = server_url.domain().or_else(|| server_url.host_str()) {
+                    let token = {
+                        let store = self
+                            .cookie
+                            .lock()
+                            .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
+                        store
+                            .get(domain, "/", "csrf-token")
+                            .map(|c| c.value().to_string())
+                    };
+                    if let Some(token) = token {
+                        if let Ok(value) = header::HeaderValue::from_str(&token) {
+                            req = req.header("csrf-token", value);
+                        }
+                    }
+                }
+            }
+        }
+        // the endpoint replies with a 302 redirect (not JSON), so just confirm
+        // the request went through instead of parsing a response body.
+        let resp = req.send().await.context("logout request failed")?;
+        log::info!("logout (current terminal) status: {}", resp.status());
+        Ok(())
     }
 }
