@@ -28,6 +28,35 @@ fn stop_wg() {
     }
 }
 
+fn start_wg_netstack(
+    log_level: i32,
+    protocol: i32,
+    addresses: &str,
+    dns: &str,
+    socks_listen: &str,
+    socks_user: &str,
+    socks_pass: &str,
+    mtu: i32,
+) -> Result<i32> {
+    let c_addresses = CString::new(addresses).context("addresses contains null character")?;
+    let c_dns = CString::new(dns).context("dns contains null character")?;
+    let c_socks = CString::new(socks_listen).context("socks_listen contains null character")?;
+    let c_user = CString::new(socks_user).context("socks_user contains null character")?;
+    let c_pass = CString::new(socks_pass).context("socks_pass contains null character")?;
+    unsafe {
+        Ok(libwg::startWgNetstack(
+            log_level,
+            protocol,
+            c_addresses.as_ptr(),
+            c_dns.as_ptr(),
+            c_socks.as_ptr(),
+            c_user.as_ptr(),
+            c_pass.as_ptr(),
+            mtu,
+        ))
+    }
+}
+
 fn uapi(buff: &[u8]) -> Result<Vec<u8>> {
     let input_cstring = CString::new(buff).context("buff contains null character")?;
     unsafe {
@@ -54,6 +83,42 @@ pub fn start_wg_go(name: &str, protocol: i32, with_log: bool) -> Result<()> {
     let ret = start_wg(log_level, protocol, name)?;
     if !matches!(ret, 0) {
         return Err(anyhow!("start_wg returned non-zero code: {ret}"));
+    }
+    Ok(())
+}
+
+// start wg-corplink in userspace netstack mode and expose a SOCKS5 proxy.
+// no kernel TUN device, no system routes/dns and no root are needed.
+pub fn start_wg_go_netstack(
+    conf: &config::WgConf,
+    socks_listen: &str,
+    socks_user: &str,
+    socks_pass: &str,
+    with_log: bool,
+) -> Result<()> {
+    log::info!("start wg-corplink in netstack/socks5 mode");
+    let log_level = if with_log {
+        libwg::LogLevelVerbose
+    } else {
+        libwg::LogLevelError
+    };
+    let mut addrs = vec![conf.address.clone()];
+    if !conf.address6.is_empty() {
+        addrs.push(conf.address6.clone());
+    }
+    let addresses = addrs.join(",");
+    let ret = start_wg_netstack(
+        log_level,
+        conf.protocol,
+        &addresses,
+        &conf.dns,
+        socks_listen,
+        socks_user,
+        socks_pass,
+        conf.mtu as i32,
+    )?;
+    if !matches!(ret, 0) {
+        return Err(anyhow!("start_wg_netstack returned non-zero code: {ret}"));
     }
     Ok(())
 }
@@ -105,6 +170,36 @@ impl UAPIClient {
 
         buff.push('\n');
         log::info!("send config to uapi");
+        let data = uapi(buff.as_bytes()).context("call uapi")?;
+        let s = String::from_utf8(data).context("failed to decode uapi response")?;
+        if !s.contains("errno=0") {
+            return Err(anyhow!("uapi returns unexpected result: {}", s));
+        }
+        Ok(())
+    }
+
+    // configure wg for netstack mode. only the standard wg-go uapi operations
+    // are sent: the interface address/mtu and the device "up" state are handled
+    // by netstack at creation time, and there are no system routes to install.
+    pub async fn config_wg_netstack(&mut self, conf: &config::WgConf) -> Result<()> {
+        let mut buff = String::from("set=1\n");
+        let private_key = utils::b64_decode_to_hex(&conf.private_key)?;
+        let public_key = utils::b64_decode_to_hex(&conf.peer_key)?;
+        buff.push_str(format!("private_key={private_key}\n").as_str());
+        buff.push_str("replace_peers=true\n");
+        buff.push_str(format!("public_key={public_key}\n").as_str());
+        buff.push_str("replace_allowed_ips=true\n");
+        buff.push_str(format!("endpoint={}\n", conf.peer_address).as_str());
+        buff.push_str("persistent_keepalive_interval=10\n");
+        for allowed_ip in &conf.allowed_ips {
+            if allowed_ip.contains("/") {
+                buff.push_str(format!("allowed_ip={allowed_ip}\n").as_str());
+            } else {
+                buff.push_str(format!("allowed_ip={allowed_ip}/32\n").as_str());
+            }
+        }
+        buff.push('\n');
+        log::info!("send netstack config to uapi");
         let data = uapi(buff.as_bytes()).context("call uapi")?;
         let s = String::from_utf8(data).context("failed to decode uapi response")?;
         if !s.contains("errno=0") {

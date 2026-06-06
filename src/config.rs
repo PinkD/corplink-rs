@@ -74,6 +74,16 @@ pub struct Config {
     /// Useful in full mode to punch holes for local LAN or the VPN peer IP itself,
     /// avoiding routing loops (e.g. 192.168.1.0/24, 10.0.0.5/32).
     pub vpn_disallowed_routes: Option<Vec<String>>,
+    /// When set, run entirely in userspace (gVisor netstack) and expose a SOCKS5
+    /// proxy at this listen address (e.g. "0.0.0.0:1080" or "127.0.0.1:1080")
+    /// instead of creating a kernel TUN device. No system interface, routes, DNS
+    /// changes or root privileges are required. Only TCP CONNECT is supported.
+    pub socks5_listen: Option<String>,
+    /// Optional SOCKS5 username/password authentication (RFC 1929). When
+    /// `socks5_username` is set and non-empty, clients must authenticate with
+    /// these credentials; otherwise the proxy accepts connections without auth.
+    pub socks5_username: Option<String>,
+    pub socks5_password: Option<String>,
 }
 
 impl fmt::Display for Config {

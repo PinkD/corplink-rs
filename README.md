@@ -204,9 +204,33 @@ RUST_LOG=debug ./corplink-rs config.json
   // "0.0.0.0/0" (full-tunnel). useful for keeping local LAN traffic off the
   // VPN, and for excluding the VPN peer endpoint IP to avoid a routing loop
   // that would otherwise black-hole all traffic.
-  "vpn_disallowed_routes": ["192.168.1.0/24"]
+  "vpn_disallowed_routes": ["192.168.1.0/24"],
+  // optional: run entirely in userspace (gVisor netstack) and expose a SOCKS5
+  // proxy at this address instead of creating a kernel TUN device. No system
+  // interface, routes, DNS changes or root privileges are required.
+  // supports TCP CONNECT and UDP ASSOCIATE; hostnames are resolved in-tunnel.
+  "socks5_listen": "0.0.0.0:1080",
+  // optional: require SOCKS5 username/password auth (RFC 1929) on the proxy.
+  // when socks5_username is empty/unset, the proxy accepts connections with no auth.
+  "socks5_username": "user",
+  "socks5_password": "pass"
 }
 ```
+
+## SOCKS5 / netstack 模式
+
+设置 `socks5_listen` 后，corplink-rs 不再创建内核 TUN 网卡，而是用 [wg-go][2] 的 gVisor netstack 在用户态跑 WireGuard，并在该地址上暴露一个 SOCKS5 代理：
+
+- **无需 root / 不改系统路由和 DNS / 不建网卡**，适合容器、无权限环境或只想给单个应用走 VPN 的场景
+- 支持 TCP `CONNECT` 和 UDP `ASSOCIATE`，域名在隧道内解析（用 `--socks5-hostname` 让客户端把 DNS 也交给代理）
+- 可选用户名/密码认证（RFC 1929）：设置 `socks5_username`（及 `socks5_password`）即开启；留空则免认证
+
+```sh
+# 例：通过代理访问内网
+curl --socks5-hostname user:pass@127.0.0.1:1080 https://intranet.example.com/
+```
+
+此模式下 `interface_name`、`use_vpn_dns`、`auto_setup_routes` 等与系统网卡/路由相关的设置不生效。
 
 # 原理和分析
 

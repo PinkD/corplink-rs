@@ -73,7 +73,6 @@ async fn run() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     print_version();
-    check_privilege();
 
     let conf_file = parse_arg();
     let mut conf = Config::from_file(&conf_file)
@@ -83,6 +82,16 @@ async fn run() -> Result<()> {
         .interface_name
         .clone()
         .context("interface name missing in config")?;
+    let socks5_listen = conf.socks5_listen.clone();
+    let socks5_username = conf.socks5_username.clone().unwrap_or_default();
+    let socks5_password = conf.socks5_password.clone().unwrap_or_default();
+    let netstack_mode = socks5_listen.is_some();
+
+    // netstack/socks5 mode runs entirely in userspace (no kernel TUN device,
+    // no system routes/dns), so it does not require elevated privileges.
+    if !netstack_mode {
+        check_privilege();
+    }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let use_vpn_dns = conf.use_vpn_dns.unwrap_or(false);
@@ -139,21 +148,38 @@ async fn run() -> Result<()> {
             }
         };
     }
-    log::info!("start wg-corplink for {}", &name);
     let wg_conf = wg_conf.ok_or_else(|| anyhow!("wg conf missing after connect loop"))?;
     let protocol = wg_conf.protocol;
-    wg::start_wg_go(&name, protocol, with_wg_log)
-        .with_context(|| format!("failed to start wg-corplink for {}", name))?;
     let mut uapi = wg::UAPIClient { name: name.clone() };
-    uapi.config_wg(&wg_conf)
-        .await
-        .with_context(|| format!("failed to config interface with uapi for {name}"))?;
+    if let Some(listen) = &socks5_listen {
+        log::info!("start wg-corplink (netstack/socks5) on {}", listen);
+        wg::start_wg_go_netstack(&wg_conf, listen, &socks5_username, &socks5_password, with_wg_log)
+            .context("failed to start wg-corplink in netstack mode")?;
+        uapi.config_wg_netstack(&wg_conf)
+            .await
+            .context("failed to config netstack interface with uapi")?;
+        if socks5_username.is_empty() {
+            log::info!("socks5 proxy ready at {} (no auth)", listen);
+        } else {
+            log::info!(
+                "socks5 proxy ready at {} (username/password auth required)",
+                listen
+            );
+        }
+    } else {
+        log::info!("start wg-corplink for {}", &name);
+        wg::start_wg_go(&name, protocol, with_wg_log)
+            .with_context(|| format!("failed to start wg-corplink for {}", name))?;
+        uapi.config_wg(&wg_conf)
+            .await
+            .with_context(|| format!("failed to config interface with uapi for {name}"))?;
+    }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let mut dns_manager = DNSManager::new(dns_backup_filename);
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if use_vpn_dns {
+    if use_vpn_dns && !netstack_mode {
         match dns_manager.set_dns(vec![&wg_conf.dns], vec![]) {
             Ok(_) => {}
             Err(err) => {
@@ -198,7 +224,7 @@ async fn run() -> Result<()> {
     wg::stop_wg_go();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if use_vpn_dns {
+    if use_vpn_dns && !netstack_mode {
         match dns_manager.restore_dns() {
             Ok(_) => {}
             Err(err) => {
