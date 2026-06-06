@@ -164,16 +164,7 @@ async fn run() -> Result<()> {
 
     let mut exit_code = 0;
     tokio::select! {
-        // handle signal
-        _ = async {
-            match tokio::signal::ctrl_c().await {
-                Ok(_) => {},
-                Err(e) => {
-                    log::warn!("failed to receive signal: {}",e);
-                },
-            }
-            log::info!("ctrl+c received");
-        } => {},
+        _ = wait_for_shutdown_signal() => {},
 
         // keep alive
         // _ = c.keep_alive_vpn(&wg_conf, 60) => {
@@ -209,6 +200,47 @@ async fn run() -> Result<()> {
 
     log::info!("reach exit");
     exit(exit_code)
+}
+
+// Resolve when the process is asked to terminate: ctrl+c (SIGINT) or, on unix,
+// SIGTERM (sent by `docker stop`, systemd, `kill`, etc). Handling SIGTERM lets
+// the graceful shutdown path run — notably the feilian_v1 logout that releases
+// the server-side terminal slot, which is otherwise leaked on every stop.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                log::warn!("failed to install SIGTERM handler: {}", e);
+                None
+            }
+        };
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => {
+                if let Err(e) = r {
+                    log::warn!("failed to receive signal: {}", e);
+                }
+                log::info!("ctrl+c received");
+            }
+            _ = async {
+                match term.as_mut() {
+                    Some(t) => { t.recv().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                log::info!("SIGTERM received");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            log::warn!("failed to receive signal: {}", e);
+        }
+        log::info!("ctrl+c received");
+    }
 }
 
 fn check_privilege() {
