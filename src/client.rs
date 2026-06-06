@@ -219,10 +219,33 @@ impl Client {
                 break;
             }
         }
-        let resp = resp
-            .json::<Resp<T>>()
+        let text = resp
+            .text()
             .await
-            .with_context(|| format!("failed to parse response for api {api:?}"))?;
+            .with_context(|| format!("failed to read response body for api {api:?}"))?;
+        // Parse the envelope generically first. When the server-side session has
+        // expired the server returns a non-zero code (e.g. 101) with a `data`
+        // whose shape doesn't match T (ListVPN, for instance, gets an object where
+        // it expects an array). Deserializing straight into Resp<T> would fail here
+        // and bypass the code-based logout/retry handling, leaving a stale-session
+        // run dead with a confusing parse error. So only coerce `data` into T once
+        // we know code == 0; otherwise keep the code/message so callers can react.
+        let raw: Resp<Value> = serde_json::from_str(&text).with_context(|| {
+            format!("failed to parse response envelope for api {api:?}: {text}")
+        })?;
+        let data = match (raw.code, raw.data) {
+            (0, Some(v)) => Some(
+                serde_json::from_value::<T>(v)
+                    .with_context(|| format!("failed to parse response data for api {api:?}"))?,
+            ),
+            _ => None,
+        };
+        let resp = Resp::<T> {
+            code: raw.code,
+            message: raw.message,
+            data,
+            action: raw.action,
+        };
         log::debug!("api {:#?} resp: {:#?}", api, resp);
         Ok(resp)
     }
