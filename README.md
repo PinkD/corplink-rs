@@ -213,7 +213,14 @@ RUST_LOG=debug ./corplink-rs config.json
   // optional: require SOCKS5 username/password auth (RFC 1929) on the proxy.
   // when socks5_username is empty/unset, the proxy accepts connections with no auth.
   "socks5_username": "user",
-  "socks5_password": "pass"
+  "socks5_password": "pass",
+  // optional: force the WireGuard transport ("udp" or "tcp") instead of the
+  // server-advertised protocol_mode. some protocol_mode=1 (tcp) gateways also accept
+  // WireGuard over UDP -- the server even ships a protocol_detect_config (udp<->tcp switch
+  // thresholds) for them in /api/vpn/list. since WireGuard-over-TCP can collapse to a few
+  // KB/s on a lossy uplink (TCP-over-TCP), forcing "udp" can be far faster there.
+  // leave unset to follow the server's protocol_mode (1 => tcp, otherwise udp).
+  "force_protocol": "udp"
 }
 ```
 
