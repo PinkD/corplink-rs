@@ -87,6 +87,14 @@ pub struct Config {
     /// these credentials; otherwise the proxy accepts connections without auth.
     pub socks5_username: Option<String>,
     pub socks5_password: Option<String>,
+    /// Force the WireGuard transport protocol instead of using the server-advertised
+    /// `protocol_mode`. Accepts "udp" or "tcp" (case-insensitive). Some `protocol_mode: 1`
+    /// (TCP) gateways also accept WireGuard over UDP -- for those the server even ships a
+    /// `protocol_detect_config` (udp<->tcp switch thresholds) in the `/api/vpn/list` entry.
+    /// Since WireGuard-over-TCP can collapse to a few KB/s on a lossy uplink (TCP-over-TCP
+    /// head-of-line blocking), forcing "udp" can be far faster there. Leave unset to keep the
+    /// default (follow server `protocol_mode`: 1 => tcp, otherwise udp).
+    pub force_protocol: Option<String>,
 }
 
 impl fmt::Display for Config {

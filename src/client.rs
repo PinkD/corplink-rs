@@ -1040,11 +1040,16 @@ impl Client {
             allowed_ips,
             routes,
             dns,
-            protocol: match vpn.protocol_mode {
-                // tcp
-                1 => 1,
-                // udp
-                _ => 0,
+            // `force_protocol`, when set, overrides the server-advertised `protocol_mode`
+            protocol: match self.conf.force_protocol.as_deref() {
+                Some(p) if p.eq_ignore_ascii_case("udp") => 0,
+                Some(p) if p.eq_ignore_ascii_case("tcp") => 1,
+                _ => match vpn.protocol_mode {
+                    // tcp
+                    1 => 1,
+                    // udp
+                    _ => 0,
+                },
             },
         };
         Ok(wg_conf)
