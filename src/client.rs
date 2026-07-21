@@ -31,6 +31,86 @@ use crate::utils;
 const COOKIE_FILE_SUFFIX: &str = "cookies.json";
 const USER_AGENT: &str = "CorpLink/201000 (GooglePixel; Android 10; en)";
 
+fn merge_additional_routes(
+    mut routes: Vec<String>,
+    additional_routes: &[String],
+    has_ipv6_address: bool,
+) -> Vec<String> {
+    for route in additional_routes {
+        if !crate::utils::is_valid_cidr(route) {
+            log::warn!("ignoring invalid vpn_additional_routes CIDR: {:?}", route);
+            continue;
+        }
+        if !has_ipv6_address && route.contains(':') {
+            log::info!(
+                "ignoring additional IPv6 route {:?} because the server did not assign an IPv6 address",
+                route
+            );
+            continue;
+        }
+        if !routes.contains(route) {
+            routes.push(route.clone());
+        }
+    }
+    routes
+}
+
+async fn resolve_additional_domains(
+    domains: &[String],
+    has_ipv6_address: bool,
+) -> Vec<String> {
+    let mut routes = Vec::new();
+    for configured_domain in domains {
+        let domain = configured_domain.trim();
+        if domain.is_empty() {
+            log::warn!("ignoring empty vpn_additional_domains entry");
+            continue;
+        }
+
+        match tokio::net::lookup_host((domain, 0)).await {
+            Ok(addresses) => {
+                let mut resolved = Vec::new();
+                for address in addresses {
+                    let ip = address.ip();
+                    if ip.is_ipv6() && !has_ipv6_address {
+                        continue;
+                    }
+                    let route = match ip {
+                        std::net::IpAddr::V4(_) => format!("{ip}/32"),
+                        std::net::IpAddr::V6(_) => format!("{ip}/128"),
+                    };
+                    if !routes.contains(&route) {
+                        routes.push(route.clone());
+                    }
+                    if !resolved.contains(&route) {
+                        resolved.push(route);
+                    }
+                }
+                if resolved.is_empty() {
+                    log::warn!(
+                        "vpn_additional_domains entry {:?} returned no usable addresses",
+                        domain
+                    );
+                } else {
+                    log::info!(
+                        "resolved additional VPN domain {:?} to {:?}",
+                        domain,
+                        resolved
+                    );
+                }
+            }
+            Err(err) => {
+                log::warn!(
+                    "failed to resolve vpn_additional_domains entry {:?}: {}",
+                    domain,
+                    err
+                );
+            }
+        }
+    }
+    routes
+}
+
 #[derive(Clone)]
 pub struct Client {
     conf: Config,
@@ -919,6 +999,7 @@ impl Client {
         let address6 = (!wg_info.ipv6.is_empty())
             .then_some(format!("{}/128", wg_info.ipv6))
             .unwrap_or("".into());
+        let has_ipv6_address = !address6.is_empty();
         let mut allowed_ips = match self.conf.route_mode.clone().unwrap_or_default() {
             crate::config::RouteMode::Split => {
                 log::info!("route_mode = split");
@@ -952,9 +1033,32 @@ impl Client {
             }
         };
 
-        // Restrict server routes to the optional whitelist, then carve out the
-        // optional denylist. A configured empty whitelist intentionally yields
-        // no AllowedIPs/routes; invalid whitelist entries fail closed.
+        let mut additional_routes = self
+            .conf
+            .vpn_additional_routes
+            .clone()
+            .unwrap_or_default();
+        if let Some(domains) = self.conf.vpn_additional_domains.as_deref() {
+            additional_routes
+                .extend(resolve_additional_domains(domains, has_ipv6_address).await);
+        }
+        if !additional_routes.is_empty() {
+            let before = allowed_ips.len();
+            allowed_ips = merge_additional_routes(
+                allowed_ips,
+                &additional_routes,
+                has_ipv6_address,
+            );
+            log::info!(
+                "additional VPN routes merged: {} -> {} entries",
+                before,
+                allowed_ips.len()
+            );
+        }
+
+        // Restrict server and user-added routes to the optional whitelist, then
+        // carve out the optional denylist. A configured empty whitelist
+        // intentionally yields no AllowedIPs/routes; invalid entries fail closed.
         if let Some(allowed) = self.conf.vpn_allowed_routes.as_deref() {
             for route in allowed {
                 if !crate::utils::is_valid_cidr(route) {
@@ -1149,5 +1253,44 @@ impl Client {
         let resp = req.send().await.context("logout request failed")?;
         log::info!("logout (current terminal) status: {}", resp.status());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_additional_routes, resolve_additional_domains};
+
+    #[test]
+    fn additional_routes_are_validated_deduplicated_and_merged() {
+        let routes = merge_additional_routes(
+            vec!["10.0.0.0/8".to_string()],
+            &[
+                "10.0.0.0/8".to_string(),
+                "20.205.243.160/28".to_string(),
+                "invalid".to_string(),
+                "2001:db8::/32".to_string(),
+            ],
+            false,
+        );
+
+        assert_eq!(routes, vec!["10.0.0.0/8", "20.205.243.160/28"]);
+    }
+
+    #[test]
+    fn additional_ipv6_routes_are_kept_with_an_ipv6_address() {
+        let routes = merge_additional_routes(
+            Vec::new(),
+            &["2001:db8::/32".to_string()],
+            true,
+        );
+
+        assert_eq!(routes, vec!["2001:db8::/32"]);
+    }
+
+    #[tokio::test]
+    async fn additional_domains_are_resolved_to_host_routes() {
+        let routes = resolve_additional_domains(&["127.0.0.1".to_string()], false).await;
+
+        assert_eq!(routes, vec!["127.0.0.1/32"]);
     }
 }

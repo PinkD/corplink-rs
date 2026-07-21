@@ -73,6 +73,11 @@ pub struct Config {
     pub auto_setup_routes: Option<bool>,
     /// "split" (default) or "full". Selects which route list from the server to apply.
     pub route_mode: Option<RouteMode>,
+    /// Optional CIDRs appended to the server-provided routes before route filters.
+    pub vpn_additional_routes: Option<Vec<String>>,
+    /// Optional hostnames resolved on every connection. Resolved addresses are appended
+    /// as host routes before route filters.
+    pub vpn_additional_domains: Option<Vec<String>>,
     /// Optional CIDR whitelist intersected with server routes.
     /// Missing/null preserves server routes; an empty list allows no routes.
     pub vpn_allowed_routes: Option<Vec<String>>,
