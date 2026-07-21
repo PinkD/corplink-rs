@@ -114,6 +114,17 @@ async fn resolve_additional_domains(
     routes
 }
 
+fn combine_ip_routes(
+    mut ipv4_routes: Vec<String>,
+    ipv6_routes: Vec<String>,
+    has_ipv6_address: bool,
+) -> Vec<String> {
+    if has_ipv6_address {
+        ipv4_routes.extend(ipv6_routes);
+    }
+    ipv4_routes
+}
+
 #[derive(Clone)]
 pub struct Client {
     conf: Config,
@@ -1024,18 +1035,22 @@ impl Client {
             .clone();
         let ip_mask = wg_info.ip_mask.parse::<u32>().context("invalid ip mask")?;
         let address = format!("{}/{}", wg_info.ip, ip_mask);
-        let address6 = (!wg_info.ipv6.is_empty())
+        let has_ipv6_address = !wg_info.ipv6.is_empty();
+        let address6 = has_ipv6_address
             .then_some(format!("{}/128", wg_info.ipv6))
-            .unwrap_or("".into());
-        let has_ipv6_address = !address6.is_empty();
+            .unwrap_or_default();
         let mut allowed_ips = match self.conf.route_mode.clone().unwrap_or_default() {
             crate::config::RouteMode::Split => {
                 log::info!("route_mode = split");
-                [
-                    wg_info.setting.vpn_route_split,
-                    wg_info.setting.v6_route_split.unwrap_or_default(),
-                ]
-                .concat()
+                let v4 = wg_info.setting.vpn_route_split;
+                let v6 = wg_info.setting.v6_route_split.unwrap_or_default();
+                if !has_ipv6_address && !v6.is_empty() {
+                    log::info!(
+                        "ignoring {} IPv6 split routes because the server did not assign an IPv6 address",
+                        v6.len()
+                    );
+                }
+                combine_ip_routes(v4, v6, has_ipv6_address)
             }
             crate::config::RouteMode::Full => {
                 log::info!("route_mode = full");
@@ -1051,13 +1066,20 @@ impl Client {
                     v6.len(),
                     v6
                 );
-                if v4.is_empty() && v6.is_empty() {
+                if !has_ipv6_address && !v6.is_empty() {
+                    log::info!(
+                        "ignoring {} IPv6 full-tunnel routes because the server did not assign an IPv6 address",
+                        v6.len()
+                    );
+                }
+                let routes = combine_ip_routes(v4, v6, has_ipv6_address);
+                if routes.is_empty() {
                     bail!(
-                        "route_mode=full but server returned no routes (vpn_route_full / v6_route_full both empty); \
+                        "route_mode=full but server returned no usable routes; \
                          refuse to fall back to 0.0.0.0/0 to avoid peer-IP routing loop that blocks all traffic"
                     );
                 }
-                [v4, v6].concat()
+                routes
             }
         };
 
@@ -1286,7 +1308,7 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_additional_routes, resolve_additional_domains};
+    use super::{combine_ip_routes, merge_additional_routes, resolve_additional_domains};
     use crate::utils::apply_route_filters;
 
     #[test]
@@ -1336,5 +1358,27 @@ mod tests {
         let routes = resolve_additional_domains(&["127.0.0.1".to_string()], false).await;
 
         assert_eq!(routes, vec!["127.0.0.1/32"]);
+    }
+
+    #[test]
+    fn ipv6_routes_are_ignored_without_an_ipv6_address() {
+        let routes = combine_ip_routes(
+            vec!["0.0.0.0/1".to_string()],
+            vec!["::/1".to_string()],
+            false,
+        );
+
+        assert_eq!(routes, vec!["0.0.0.0/1"]);
+    }
+
+    #[test]
+    fn ipv6_routes_are_kept_with_an_ipv6_address() {
+        let routes = combine_ip_routes(
+            vec!["0.0.0.0/1".to_string()],
+            vec!["::/1".to_string()],
+            true,
+        );
+
+        assert_eq!(routes, vec!["0.0.0.0/1", "::/1"]);
     }
 }
