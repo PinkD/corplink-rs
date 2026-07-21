@@ -18,7 +18,8 @@ const URL_VERIFY_CODE: &str = "{{url}}/api/login/code/verify?os={{os}}&os_versio
 const URL_LOGIN_PASSWORD: &str = "{{url}}/api/login?os={{os}}&os_version={{version}}";
 const URL_LOGIN_PASSWORD_V1: &str =
     "{{url}}/api/v1/login?os={{os}}&os_version={{version}}&client_source=FeiLian";
-const URL_LIST_VPN: &str = "{{url}}/api/vpn/list?os={{os}}&os_version={{version}}";
+const URL_LIST_VPN: &str =
+    "{{url}}/api/vpn/list?os={{os}}&os_version={{version}}&app_version={{app_version}}";
 
 const URL_PING_VPN_HOST: &str = "{{url}}/vpn/ping?os={{os}}&os_version={{version}}";
 const URL_FETCH_PEER_INFO: &str = "{{url}}/vpn/conn?os={{os}}&os_version={{version}}";
@@ -54,6 +55,7 @@ struct UserUrlParam {
     url: String,
     os: String,
     version: String,
+    app_version: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -112,6 +114,7 @@ impl ApiUrl {
                     .context("server url missing in config")?,
                 os: os.clone(),
                 version: version.clone(),
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
             },
             vpn_param: VpnUrlParam {
                 url: "".to_string(),
@@ -143,5 +146,32 @@ impl ApiUrl {
             ApiName::KeepAliveVPN => self.api_template[name].render(vpn_param),
             ApiName::DisconnectVPN => self.api_template[name].render(vpn_param),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn list_vpn_url_includes_app_version() {
+        let conf: Config = serde_json::from_value(json!({
+            "company_name": "test",
+            "username": "test",
+            "server": "https://vpn.example.com"
+        }))
+        .unwrap();
+
+        let api_url = ApiUrl::new(&conf).unwrap();
+
+        assert_eq!(
+            api_url.get_api_url(&ApiName::ListVPN),
+            format!(
+                "https://vpn.example.com/api/vpn/list?os=Android&os_version=2&app_version={}",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
     }
 }

@@ -10,6 +10,7 @@ use std::{fs, io};
 use anyhow::{anyhow, bail, Context, Result};
 use cookie::Cookie as RawCookie;
 use cookie_store::{Cookie, CookieStore};
+use futures::stream::{FuturesUnordered, StreamExt};
 use reqwest::header;
 use reqwest::{ClientBuilder, Response, Url};
 use reqwest_cookie_store::CookieStoreMutex;
@@ -771,8 +772,20 @@ impl Client {
     ) -> Option<RespVpnInfo> {
         let mut fast_vpn = None;
         let mut min_latency = i64::MAX;
-        for vpn in vpn_info {
-            let latency = match self.ping_vpn(vpn.ip.clone(), vpn.api_port).await {
+
+        let mut probes = vpn_info
+            .into_iter()
+            .map(|vpn| {
+                let mut client = self.clone();
+                async move {
+                    let result = client.ping_vpn(vpn.ip.clone(), vpn.api_port).await;
+                    (vpn, result)
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while let Some((vpn, result)) = probes.next().await {
+            let latency = match result {
                 Ok(latency) => latency,
                 Err(err) => {
                     log::warn!("failed to ping {}:{}: {}", vpn.ip, vpn.api_port, err);
@@ -797,59 +810,70 @@ impl Client {
     }
 
     async fn get_first_available_vpn(&mut self, vpn_info: Vec<RespVpnInfo>) -> Option<RespVpnInfo> {
-        for vpn in vpn_info {
-            let latency = match self.ping_vpn(vpn.ip.clone(), vpn.api_port).await {
-                Ok(latency) => latency,
+        let mut probes = vpn_info
+            .into_iter()
+            .map(|vpn| {
+                let mut client = self.clone();
+                async move {
+                    let result = client.ping_vpn(vpn.ip.clone(), vpn.api_port).await;
+                    (vpn, result)
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        while let Some((vpn, result)) = probes.next().await {
+            match result {
+                Ok(latency) => {
+                    log::info!("server name {}, latency {}ms", vpn.en_name, latency);
+                    return Some(vpn);
+                }
                 Err(err) => {
                     log::warn!("failed to ping {}:{}: {}", vpn.ip, vpn.api_port, err);
-                    -1
                 }
-            };
-            if latency != -1 {
-                return Some(vpn);
             }
         }
         None
     }
 
+    fn prepare_vpn_endpoint(&mut self, ip: String, api_port: u16) -> Result<()> {
+        let mut cookie_store = self
+            .cookie
+            .lock()
+            .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
+        let server_url = self
+            .conf
+            .server
+            .as_ref()
+            .context("server url is required to configure vpn endpoint")?;
+
+        let mut url = Url::from_str(server_url)
+            .with_context(|| format!("invalid server url: {server_url}"))?;
+        let cookies: Vec<Cookie> = cookie_store
+            .iter_any()
+            .filter(|cookie| cookie.domain.matches(&url))
+            .cloned()
+            .collect();
+        url.set_host(Some(ip.as_str()))
+            .context("failed to set vpn endpoint host")?;
+        url.set_port(Some(api_port))
+            .or_else(|_| bail!("failed to set vpn endpoint port"))?;
+        for cookie in cookies {
+            let mut raw_cookie =
+                cookie::Cookie::new(cookie.name().to_string(), cookie.value().to_string());
+            raw_cookie.set_domain(ip.clone());
+            let endpoint_cookie = Cookie::try_from_raw_cookie(&raw_cookie, &url)
+                .context("failed to convert raw cookie")?;
+            cookie_store
+                .insert(endpoint_cookie, &url)
+                .context("failed to insert vpn endpoint cookie")?;
+        }
+        self.api_url.vpn_param.url = url.to_string().trim_end_matches('/').to_string();
+        Ok(())
+    }
+
     // ping vpn and return latency in ms. Will return Err on error
     async fn ping_vpn(&mut self, ip: String, api_port: u16) -> Result<i64> {
-        {
-            // config cookie
-            let mut cookie = self
-                .cookie
-                .lock()
-                .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
-            let server_url = self
-                .conf
-                .server
-                .as_ref()
-                .context("server url is required to ping vpn")?;
-
-            let mut url = Url::from_str(server_url)
-                .with_context(|| format!("invalid server url: {server_url}"))?;
-            let mut cookies: Vec<Cookie> = Vec::new();
-            for c in cookie.iter_any() {
-                if c.domain.matches(&url.clone()) {
-                    cookies.push(c.clone());
-                }
-            }
-            url.set_host(Some(ip.as_str()))
-                .context("failed to set ping host")?;
-            url.set_port(Some(api_port))
-                .or_else(|_| bail!("failed to set ping port"))?;
-            for c in cookies {
-                let mut c = cookie::Cookie::new(c.name().to_string(), c.value().to_string());
-                c.set_domain(ip.clone());
-                let c = Cookie::try_from_raw_cookie(&c, &url.clone())
-                    .context("failed to convert raw cookie")?;
-                cookie
-                    .insert(c, &url.clone())
-                    .context("failed to insert ping cookie")?;
-            }
-            self.api_url.vpn_param.url = url.to_string().trim_end_matches('/').to_string();
-        }
-        self.save_cookie()?;
+        self.prepare_vpn_endpoint(ip, api_port)?;
         let req_start = Utc::now().timestamp_millis();
         let resp = self.request::<String>(ApiName::PingVPN, None).await?;
         let req_end = Utc::now().timestamp_millis();
@@ -970,6 +994,8 @@ impl Client {
             Some(ref vpn) => vpn,
             None => bail!("no vpn available"),
         };
+        self.prepare_vpn_endpoint(vpn.ip.clone(), vpn.api_port)?;
+        self.save_cookie()?;
         let vpn_addr = format!("{}:{}", vpn.ip, vpn.vpn_port);
         log::info!("try connect to {}, address {}", vpn.en_name, vpn_addr);
 
