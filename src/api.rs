@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::template::Template;
 
 pub const URL_GET_COMPANY: &str = "https://corplink.volcengine.cn/api/match";
+pub(crate) const CORPLINK_APP_VERSION: &str = "201000";
 
 const URL_GET_LOGIN_METHOD: &str = "{{url}}/api/login/setting?os={{os}}&os_version={{version}}";
 const URL_GET_TPS_LOGIN_METHOD: &str = "{{url}}/api/tpslogin/link?os={{os}}&os_version={{version}}";
@@ -114,7 +115,7 @@ impl ApiUrl {
                     .context("server url missing in config")?,
                 os: os.clone(),
                 version: version.clone(),
-                app_version: env!("CARGO_PKG_VERSION").to_string(),
+                app_version: CORPLINK_APP_VERSION.to_string(),
             },
             vpn_param: VpnUrlParam {
                 url: "".to_string(),
@@ -168,10 +169,7 @@ mod tests {
 
         assert_eq!(
             api_url.get_api_url(&ApiName::ListVPN),
-            format!(
-                "https://vpn.example.com/api/vpn/list?os=Android&os_version=2&app_version={}",
-                env!("CARGO_PKG_VERSION")
-            )
+            "https://vpn.example.com/api/vpn/list?os=Android&os_version=2&app_version=201000"
         );
     }
 }
