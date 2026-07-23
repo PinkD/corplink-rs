@@ -69,7 +69,7 @@ async fn resolve_additional_domains(
 
         match tokio::net::lookup_host((domain, 0)).await {
             Ok(addresses) => {
-                let mut resolved = Vec::new();
+                let mut domain_routes = Vec::new();
                 for address in addresses {
                     let ip = address.ip();
                     if ip.is_ipv6() && !has_ipv6_address {
@@ -79,14 +79,11 @@ async fn resolve_additional_domains(
                         std::net::IpAddr::V4(_) => format!("{ip}/32"),
                         std::net::IpAddr::V6(_) => format!("{ip}/128"),
                     };
-                    if !routes.contains(&route) {
-                        routes.push(route.clone());
-                    }
-                    if !resolved.contains(&route) {
-                        resolved.push(route);
+                    if !domain_routes.contains(&route) {
+                        domain_routes.push(route);
                     }
                 }
-                if resolved.is_empty() {
+                if domain_routes.is_empty() {
                     log::warn!(
                         "vpn_additional_domains entry {:?} returned no usable addresses",
                         domain
@@ -95,8 +92,13 @@ async fn resolve_additional_domains(
                     log::info!(
                         "resolved additional VPN domain {:?} to {:?}",
                         domain,
-                        resolved
+                        domain_routes
                     );
+                }
+                for route in domain_routes {
+                    if !routes.contains(&route) {
+                        routes.push(route);
+                    }
                 }
             }
             Err(err) => {
@@ -1259,6 +1261,7 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::{merge_additional_routes, resolve_additional_domains};
+    use crate::utils::apply_route_filters;
 
     #[test]
     fn additional_routes_are_validated_deduplicated_and_merged() {
@@ -1285,6 +1288,21 @@ mod tests {
         );
 
         assert_eq!(routes, vec!["2001:db8::/32"]);
+    }
+
+    #[test]
+    fn additional_routes_are_merged_before_route_filters() {
+        let routes = merge_additional_routes(
+            vec!["10.0.0.0/8".to_string()],
+            &["20.205.243.160/28".to_string()],
+            false,
+        );
+        let allowed = ["20.205.243.160/28".to_string()];
+
+        assert_eq!(
+            apply_route_filters(&routes, Some(&allowed), None),
+            vec!["20.205.243.160/28"]
+        );
     }
 
     #[tokio::test]
