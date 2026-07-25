@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::net::{IpAddr, SocketAddr};
 use std::path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -878,19 +879,28 @@ impl Client {
         None
     }
 
-    fn vpn_endpoint_url(&self, ip: &str, api_port: u16) -> Result<Url> {
+    fn vpn_endpoint_url(&self, host: &str, api_port: u16) -> Result<Url> {
         let server_url = self
             .conf
             .server
             .as_ref()
             .context("server url is required to configure vpn endpoint")?;
-        let mut url = Url::from_str(server_url)
+        let server_url = Url::from_str(server_url)
             .with_context(|| format!("invalid server url: {server_url}"))?;
-        url.set_host(Some(ip))
-            .context("failed to set vpn endpoint host")?;
-        url.set_port(Some(api_port))
+        let mut endpoint_url = Url::parse(&format!("{}://localhost", server_url.scheme()))
+            .context("failed to construct vpn endpoint URL")?;
+        match host.parse::<IpAddr>() {
+            Ok(ip) => endpoint_url
+                .set_ip_host(ip)
+                .map_err(|_| anyhow!("failed to set vpn endpoint IP"))?,
+            Err(_) => endpoint_url
+                .set_host(Some(host))
+                .context("failed to set vpn endpoint host")?,
+        }
+        endpoint_url
+            .set_port(Some(api_port))
             .map_err(|_| anyhow!("failed to set vpn endpoint port"))?;
-        Ok(url)
+        Ok(endpoint_url)
     }
 
     fn probe_cookie_header(&self) -> Result<Option<header::HeaderValue>> {
@@ -927,9 +937,8 @@ impl Client {
             .cloned()
             .collect();
         for cookie in cookies {
-            let mut raw_cookie =
+            let raw_cookie =
                 cookie::Cookie::new(cookie.name().to_string(), cookie.value().to_string());
-            raw_cookie.set_domain(ip.to_string());
             let endpoint_cookie = Cookie::try_from_raw_cookie(&raw_cookie, &url)
                 .context("failed to convert raw cookie")?;
             cookie_store
@@ -1098,7 +1107,10 @@ impl Client {
             &endpoint_url,
         );
         self.save_cookie()?;
-        let vpn_addr = format!("{}:{}", vpn.ip, vpn.vpn_port);
+        let vpn_addr = match vpn.ip.parse::<IpAddr>() {
+            Ok(ip) => SocketAddr::new(ip, vpn.vpn_port).to_string(),
+            Err(_) => format!("{}:{}", vpn.ip, vpn.vpn_port),
+        };
         log::info!("try connect to {}, address {}", vpn.en_name, vpn_addr);
 
         let key = self
@@ -1412,9 +1424,7 @@ mod tests {
     use tokio::sync::{oneshot, Barrier};
     use tokio::time::{sleep, timeout};
 
-    use super::{
-        merge_additional_routes, resolve_additional_domains, Client, ReqwestCookieStore,
-    };
+    use super::{merge_additional_routes, resolve_additional_domains, Client, ReqwestCookieStore};
     use crate::config::Config;
     use crate::resp::RespVpnInfo;
     use crate::utils::apply_route_filters;
@@ -1586,6 +1596,31 @@ mod tests {
     }
 
     #[test]
+    fn vpn_endpoint_urls_use_server_scheme_and_candidate_host() {
+        let mut client = test_client();
+        client.conf.server = Some("https://127.0.0.1/base?source=config#fragment".to_string());
+
+        let hostname_endpoint = client
+            .vpn_endpoint_url("vpn-node.example.com", 8443)
+            .unwrap();
+        let ipv4_endpoint = client.vpn_endpoint_url("192.0.2.1", 8443).unwrap();
+        let ipv6_endpoint = client.prepare_vpn_endpoint("2001:db8::1", 8443).unwrap();
+        let ipv6_cookies = ReqwestCookieStore::cookies(client.cookie.as_ref(), &ipv6_endpoint)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        assert_eq!(
+            hostname_endpoint.as_str(),
+            "https://vpn-node.example.com:8443/"
+        );
+        assert_eq!(ipv4_endpoint.as_str(), "https://192.0.2.1:8443/");
+        assert_eq!(ipv6_endpoint.as_str(), "https://[2001:db8::1]:8443/");
+        assert!(ipv6_cookies.contains("device_id=test-device"));
+    }
+
+    #[test]
     fn additional_routes_are_validated_deduplicated_and_merged() {
         let routes = merge_additional_routes(
             vec!["10.0.0.0/8".to_string()],
@@ -1603,11 +1638,7 @@ mod tests {
 
     #[test]
     fn additional_ipv6_routes_are_kept_with_an_ipv6_address() {
-        let routes = merge_additional_routes(
-            Vec::new(),
-            &["2001:db8::/32".to_string()],
-            true,
-        );
+        let routes = merge_additional_routes(Vec::new(), &["2001:db8::/32".to_string()], true);
 
         assert_eq!(routes, vec!["2001:db8::/32"]);
     }
