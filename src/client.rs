@@ -31,6 +31,10 @@ use crate::totp::{totp_offset, TIME_STEP};
 use crate::utils;
 
 const COOKIE_FILE_SUFFIX: &str = "cookies.json";
+const SIGN_ROOT_KEY_VERSION: u64 = 1;
+const SIGN_SECRET: &[u8] = b"TOK@@AoNfRIX+3bla%";
+const SIGN_HASH_BLOCK_SIZE: usize = 64;
+const SIGN_HASH_OUTPUT_SIZE: usize = 32;
 
 fn merge_additional_routes(
     mut routes: Vec<String>,
@@ -56,10 +60,7 @@ fn merge_additional_routes(
     routes
 }
 
-async fn resolve_additional_domains(
-    domains: &[String],
-    has_ipv6_address: bool,
-) -> Vec<String> {
+async fn resolve_additional_domains(domains: &[String], has_ipv6_address: bool) -> Vec<String> {
     let mut routes = Vec::new();
     for configured_domain in domains {
         let domain = configured_domain.trim();
@@ -114,6 +115,88 @@ async fn resolve_additional_domains(
     routes
 }
 
+fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; SIGN_HASH_OUTPUT_SIZE] {
+    let mut key_block = [0u8; SIGN_HASH_BLOCK_SIZE];
+    if key.len() > SIGN_HASH_BLOCK_SIZE {
+        key_block[..SIGN_HASH_OUTPUT_SIZE].copy_from_slice(&sha2::Sha256::digest(key));
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+
+    let mut ipad = [0x36u8; SIGN_HASH_BLOCK_SIZE];
+    let mut opad = [0x5cu8; SIGN_HASH_BLOCK_SIZE];
+    for i in 0..SIGN_HASH_BLOCK_SIZE {
+        ipad[i] ^= key_block[i];
+        opad[i] ^= key_block[i];
+    }
+
+    let mut inner = sha2::Sha256::new();
+    inner.update(ipad);
+    inner.update(data);
+    let inner = inner.finalize();
+
+    let mut outer = sha2::Sha256::new();
+    outer.update(opad);
+    outer.update(inner);
+    outer.finalize().into()
+}
+
+fn hkdf_sha256(secret: &[u8], salt: &[u8], info: &[u8], len: usize) -> Vec<u8> {
+    let zero_salt = [0u8; SIGN_HASH_OUTPUT_SIZE];
+    let prk = if salt.is_empty() {
+        hmac_sha256(&zero_salt, secret)
+    } else {
+        hmac_sha256(salt, secret)
+    };
+
+    let mut okm = Vec::with_capacity(len);
+    let mut previous = Vec::new();
+    let mut counter = 1u8;
+    while okm.len() < len {
+        let mut input = Vec::with_capacity(previous.len() + info.len() + 1);
+        input.extend_from_slice(&previous);
+        input.extend_from_slice(info);
+        input.push(counter);
+        previous = hmac_sha256(&prk, &input).to_vec();
+        okm.extend_from_slice(&previous);
+        counter = counter.wrapping_add(1);
+    }
+    okm.truncate(len);
+    okm
+}
+
+fn write_pb_varint(mut value: u64, out: &mut Vec<u8>) {
+    while value >= 0x80 {
+        out.push((value as u8 & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+
+fn write_pb_field_varint(field: u64, value: u64, out: &mut Vec<u8>) {
+    write_pb_varint(field << 3, out);
+    write_pb_varint(value, out);
+}
+
+fn write_pb_field_bytes(field: u64, value: &[u8], out: &mut Vec<u8>) {
+    write_pb_varint((field << 3) | 2, out);
+    write_pb_varint(value.len() as u64, out);
+    out.extend_from_slice(value);
+}
+
+fn encode_sign_header(signing_input_params: u64, signing_result: &[u8]) -> String {
+    let mut body = Vec::with_capacity(40);
+    write_pb_field_varint(1, SIGN_ROOT_KEY_VERSION, &mut body);
+    write_pb_field_varint(3, signing_input_params, &mut body);
+    write_pb_field_bytes(4, signing_result, &mut body);
+
+    use base64::Engine;
+    format!(
+        "v1;{}",
+        base64::engine::general_purpose::STANDARD.encode(body)
+    )
+}
+
 fn corplink_client_builder() -> ClientBuilder {
     ClientBuilder::new()
         // CorpLink deployments may use certificates signed by their own CA.
@@ -121,7 +204,7 @@ fn corplink_client_builder() -> ClientBuilder {
         // for debug
         // .proxy(reqwest::Proxy::all("socks5://192.168.111.233:8001").unwrap())
         .user_agent(format!(
-            "CorpLink/{CORPLINK_APP_VERSION} (GooglePixel; Android 10; en)"
+            "CorpLink/{CORPLINK_APP_VERSION} (linux; Linux; en)"
         ))
         .timeout(Duration::from_millis(10000))
 }
@@ -194,12 +277,13 @@ impl Client {
         let mut cookie_store = {
             let file = fs::File::open(&cookie_file).map(io::BufReader::new);
             match file {
-                Ok(file) => CookieStore::load_json_all(file).or_else(|e| {
-                    bail!(
-                        "failed to load cookie store from {}: {e}",
+                Ok(file) => CookieStore::load_json_all(file).unwrap_or_else(|e| {
+                    log::warn!(
+                        "failed to load cookie store from {}, using empty store: {e}",
                         cookie_file.display()
-                    )
-                })?,
+                    );
+                    CookieStore::default()
+                }),
                 Err(_) => CookieStore::default(),
             }
         };
@@ -264,18 +348,33 @@ impl Client {
     }
 
     fn save_cookie(&self) -> Result<()> {
+        let f = self
+            .conf
+            .conf_file
+            .as_ref()
+            .context("config file path missing")?;
         let interface_name = self
             .conf
             .interface_name
             .as_ref()
             .context("interface name missing in config")?;
+        let dir = match path::Path::new(f).parent() {
+            Some(dir) => dir,
+            None => path::Path::new("."),
+        };
+        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .append(false)
-            .open(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX))
+            .open(&cookie_file)
             .map(io::BufWriter::new)
-            .with_context(|| "failed to open cookie file for writing")?;
+            .with_context(|| {
+                format!(
+                    "failed to open cookie file for writing: {}",
+                    cookie_file.display()
+                )
+            })?;
         let c = self
             .cookie
             .lock()
@@ -285,24 +384,155 @@ impl Client {
         Ok(())
     }
 
+    fn cookie_header_for_url(&self, url: &Url) -> Result<Option<header::HeaderValue>> {
+        Ok(ReqwestCookieStore::cookies(self.cookie.as_ref(), url))
+    }
+
+    fn csrf_token_for_url(&self, url: &Url) -> Result<Option<header::HeaderValue>> {
+        self.cookie_value_for_url(url, "csrf-token")
+            .and_then(|value| {
+                value
+                    .map(|value| {
+                        header::HeaderValue::from_str(&value)
+                            .context("invalid csrf-token header value")
+                    })
+                    .transpose()
+            })
+    }
+
+    fn cookie_value_for_url(&self, url: &Url, name: &str) -> Result<Option<String>> {
+        let cookie_store = self
+            .cookie
+            .lock()
+            .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
+        let Some(domain) = url.domain().or_else(|| url.host_str()) else {
+            return Ok(None);
+        };
+        Ok(cookie_store
+            .get(domain, "/", name)
+            .map(|cookie| cookie.value().to_string()))
+    }
+
+    fn signing_input_params(api: &ApiName) -> Option<u64> {
+        match api {
+            ApiName::ListVPN => Some(510),
+            ApiName::ConnectVPN => Some(542),
+            _ => None,
+        }
+    }
+
+    fn sign_request(
+        &self,
+        api: &ApiName,
+        method: &str,
+        url: &Url,
+        body: Option<&str>,
+        cookie_header: Option<&header::HeaderValue>,
+        csrf_token: Option<&header::HeaderValue>,
+    ) -> Result<Option<String>> {
+        let Some(signing_input_params) = Self::signing_input_params(api) else {
+            return Ok(None);
+        };
+        let device_id = self
+            .conf
+            .device_id
+            .as_deref()
+            .context("device_id missing in config; required for request signing")?;
+        let info = format!("{}|{}", self.conf.company_name, device_id);
+        let key = hkdf_sha256(SIGN_SECRET, &[], info.as_bytes(), SIGN_HASH_OUTPUT_SIZE);
+
+        let cookie = cookie_header
+            .map(|value| value.to_str().context("invalid Cookie header for signing"))
+            .transpose()?
+            .unwrap_or("");
+        let csrf = csrf_token
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("invalid csrf-token header for signing")
+            })
+            .transpose()?
+            .unwrap_or("");
+        let body_hash = body
+            .filter(|body| !body.is_empty())
+            .map(|body| sha2::Sha256::digest(body.as_bytes()).to_vec())
+            .unwrap_or_default();
+        let vpn_token = if matches!(api, ApiName::ConnectVPN) {
+            self.cookie_value_for_url(url, "vpn-token")?
+                .context("vpn-token cookie missing; required for connect request signing")?
+        } else {
+            String::new()
+        };
+
+        let fields: [&[u8]; 10] = [
+            b"",
+            method.as_bytes(),
+            url.path().as_bytes(),
+            url.query().unwrap_or("").as_bytes(),
+            body_hash.as_slice(),
+            cookie.as_bytes(),
+            b"",
+            csrf.as_bytes(),
+            b"",
+            vpn_token.as_bytes(),
+        ];
+
+        let mut canonical = Vec::new();
+        for (index, value) in fields.iter().enumerate().skip(1) {
+            if (signing_input_params & (1 << index)) != 0 {
+                canonical.extend_from_slice(value);
+            }
+        }
+
+        let signing_result = hmac_sha256(&key, &canonical);
+        Ok(Some(encode_sign_header(
+            signing_input_params,
+            &signing_result,
+        )))
+    }
+
     async fn request<T: DeserializeOwned + fmt::Debug>(
         &mut self,
         api: ApiName,
         body: Option<Map<String, Value>>,
     ) -> Result<Resp<T>> {
         let url = self.api_url.get_api_url(&api);
+        let parsed_url = Url::from_str(&url).with_context(|| format!("invalid url for {api:?}"))?;
+        let body = body
+            .map(|body| {
+                serde_json::to_string(&body)
+                    .with_context(|| format!("failed to serialize request body for {api:?}"))
+            })
+            .transpose()?;
+        let method = if body.is_some() { "POST" } else { "GET" };
+        let cookie_header = self.cookie_header_for_url(&parsed_url)?;
+        let csrf_token = self.csrf_token_for_url(&parsed_url)?;
+        let sign_header = self.sign_request(
+            &api,
+            method,
+            &parsed_url,
+            body.as_deref(),
+            cookie_header.as_ref(),
+            csrf_token.as_ref(),
+        )?;
 
-        let rb = match body {
-            Some(body) => {
-                let body = serde_json::to_string(&body)
-                    .with_context(|| format!("failed to serialize request body for {api:?}"))?;
-                self.c
-                    .post(url)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(body)
-            }
+        let mut rb = match body {
+            Some(body) => self
+                .c
+                .post(url)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(body),
             None => self.c.get(url),
         };
+        if let Some(cookie_header) = cookie_header {
+            rb = rb.header(header::COOKIE, cookie_header);
+        }
+        if let Some(csrf_token) = csrf_token {
+            rb = rb.header("csrf-token", csrf_token);
+        }
+        if let Some(sign_header) = sign_header {
+            rb = rb.header("sign", sign_header);
+        }
 
         let resp = rb
             .send()
@@ -419,7 +649,9 @@ impl Client {
         log::info!("please scan the QR code or visit the following link to auth corplink:\n{url}");
         match TerminalQrCode::from_bytes(url.as_bytes()) {
             Ok(qr) => qr.print(),
-            Err(e) => {log::warn!("failed to generate qr code: {e}");}
+            Err(e) => {
+                log::warn!("failed to generate qr code: {e}");
+            }
         }
         match method {
             PLATFORM_LARK | PLATFORM_OIDC => {
@@ -1190,22 +1422,14 @@ impl Client {
             }
         };
 
-        let mut additional_routes = self
-            .conf
-            .vpn_additional_routes
-            .clone()
-            .unwrap_or_default();
+        let mut additional_routes = self.conf.vpn_additional_routes.clone().unwrap_or_default();
         if let Some(domains) = self.conf.vpn_additional_domains.as_deref() {
-            additional_routes
-                .extend(resolve_additional_domains(domains, has_ipv6_address).await);
+            additional_routes.extend(resolve_additional_domains(domains, has_ipv6_address).await);
         }
         if !additional_routes.is_empty() {
             let before = allowed_ips.len();
-            allowed_ips = merge_additional_routes(
-                allowed_ips,
-                &additional_routes,
-                has_ipv6_address,
-            );
+            allowed_ips =
+                merge_additional_routes(allowed_ips, &additional_routes, has_ipv6_address);
             log::info!(
                 "additional VPN routes merged: {} -> {} entries",
                 before,
@@ -1424,10 +1648,43 @@ mod tests {
     use tokio::sync::{oneshot, Barrier};
     use tokio::time::{sleep, timeout};
 
-    use super::{merge_additional_routes, resolve_additional_domains, Client, ReqwestCookieStore};
+    use super::{
+        encode_sign_header, hkdf_sha256, merge_additional_routes, resolve_additional_domains,
+        Client, ReqwestCookieStore,
+    };
     use crate::config::Config;
     use crate::resp::RespVpnInfo;
     use crate::utils::apply_route_filters;
+
+    #[test]
+    fn hkdf_sha256_matches_rfc5869_case_1() {
+        let ikm = vec![0x0b; 22];
+        let salt = hex::decode("000102030405060708090a0b0c").unwrap();
+        let info = hex::decode("f0f1f2f3f4f5f6f7f8f9").unwrap();
+        let okm = hkdf_sha256(&ikm, &salt, &info, 42);
+        assert_eq!(
+            hex::encode(okm),
+            "3cb25f25faacd57a90434f64d0362f2a\
+             2d2d0a90cf1a5a4c5db02d56ecc4c5bf\
+             34007208d5b887185865"
+                .replace(char::is_whitespace, "")
+        );
+    }
+
+    #[test]
+    fn sign_header_uses_observed_wire_shape() {
+        let header = encode_sign_header(510, &[0x11; 32]);
+        assert!(header.starts_with("v1;"));
+        let encoded = header.trim_start_matches("v1;");
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        assert_eq!(
+            hex::encode(bytes),
+            format!("080118fe032220{}", "11".repeat(32))
+        );
+    }
 
     async fn start_probe_server(
         barrier: Arc<Barrier>,
@@ -1535,8 +1792,8 @@ mod tests {
         let second_request = second_request.await.unwrap().to_ascii_lowercase();
         assert!(first_request.contains("cookie: device_id=test-device"));
         assert!(second_request.contains("cookie: device_id=test-device"));
-        assert!(first_request.contains("user-agent: corplink/201000 "));
-        assert!(second_request.contains("user-agent: corplink/201000 "));
+        assert!(first_request.contains("user-agent: corplink/3.3.17 "));
+        assert!(second_request.contains("user-agent: corplink/3.3.17 "));
 
         {
             let cookie_store = client.cookie.lock().unwrap();
