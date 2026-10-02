@@ -31,6 +31,8 @@ use crate::totp::{totp_offset, TIME_STEP};
 use crate::utils;
 
 const COOKIE_FILE_SUFFIX: &str = "cookies.json";
+const TPS_AUTH_TIMEOUT: Duration = Duration::from_secs(180);
+const TPS_AUTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 fn merge_additional_routes(
     mut routes: Vec<String>,
@@ -400,10 +402,13 @@ impl Client {
                 .data
                 .context("tps token check missing redirect url")
                 .map(|d| d.url),
-            _ => {
+            code => {
                 let msg = resp
                     .message
                     .unwrap_or_else(|| "tps token check failed".to_string());
+                if self.conf.poll_tps_auth.unwrap_or(false) && (code == 3040 || msg == "用户未登录") {
+                    bail!("tps authentication pending: {code}: {msg}");
+                }
                 bail!(msg)
             }
         }
@@ -423,10 +428,27 @@ impl Client {
         }
         match method {
             PLATFORM_LARK | PLATFORM_OIDC => {
-                log::info!("press enter if you finish auth");
-                let stdin = io::stdin();
-                stdin.lines().next();
-                self.check_tps_token(token).await
+                if self.conf.poll_tps_auth.unwrap_or(false) {
+                    log::info!("waiting up to 180s for feishu auth; no enter key required");
+                    let deadline = tokio::time::Instant::now() + TPS_AUTH_TIMEOUT;
+                    loop {
+                        match self.check_tps_token(token).await {
+                            Ok(url) => break Ok(url),
+                            Err(error) if error.to_string().starts_with("tps authentication pending:") => {
+                                if tokio::time::Instant::now() >= deadline {
+                                    break Err(error).context("timed out waiting for feishu auth");
+                                }
+                                tokio::time::sleep(TPS_AUTH_POLL_INTERVAL).await;
+                            }
+                            Err(error) => break Err(error),
+                        }
+                    }
+                } else {
+                    log::info!("press enter if you finish auth");
+                    let stdin = io::stdin();
+                    stdin.lines().next();
+                    self.check_tps_token(token).await
+                }
             }
             _ => {
                 // TODO: add all tps login support
