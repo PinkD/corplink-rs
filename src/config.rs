@@ -105,7 +105,7 @@ pub struct Config {
     /// head-of-line blocking), forcing "udp" can be far faster there. Leave unset to keep the
     /// default (follow server `protocol_mode`: 1 => tcp, otherwise udp).
     pub force_protocol: Option<String>,
-    /// Poll the TPS auth result until approval (2s interval, 180s timeout)
+    /// Poll the TPS auth result until approval (5s interval, 180s timeout)
     /// instead of waiting for Enter and checking once. Opt-in: some servers
     /// invalidate the auth ticket on the first check.
     pub poll_tps_auth: Option<bool>,

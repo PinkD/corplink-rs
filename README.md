@@ -236,7 +236,7 @@ RUST_LOG=debug ./corplink-rs config.json
   // KB/s on a lossy uplink (TCP-over-TCP), forcing "udp" can be far faster there.
   // leave unset to follow the server's protocol_mode (1 => tcp, otherwise udp).
   "force_protocol": "udp",
-  // poll the TPS auth result until approval (2s interval, 180s timeout) instead
+  // poll the TPS auth result until approval (5s interval, 180s timeout) instead
   // of waiting for Enter; opt-in because some servers invalidate the auth
   // ticket on the first check
   "poll_tps_auth": false

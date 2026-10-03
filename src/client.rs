@@ -32,7 +32,7 @@ use crate::utils;
 
 const COOKIE_FILE_SUFFIX: &str = "cookies.json";
 const TPS_AUTH_TIMEOUT: Duration = Duration::from_secs(180);
-const TPS_AUTH_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const TPS_AUTH_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 fn merge_additional_routes(
     mut routes: Vec<String>,
@@ -428,15 +428,18 @@ impl Client {
         }
         match method {
             PLATFORM_LARK | PLATFORM_OIDC => {
+                // some servers invalidate the auth ticket on the first check,
+                // so this is disabled by default
                 if self.conf.poll_tps_auth.unwrap_or(false) {
-                    log::info!("waiting up to 180s for feishu auth; no enter key required");
+                    log::info!("waiting up to 180s for tps auth");
                     let deadline = tokio::time::Instant::now() + TPS_AUTH_TIMEOUT;
                     loop {
                         match self.check_tps_token(token).await {
                             Ok(url) => break Ok(url),
                             Err(error) if error.to_string().starts_with("tps authentication pending:") => {
+                                log::info!("{error}");
                                 if tokio::time::Instant::now() >= deadline {
-                                    break Err(error).context("timed out waiting for feishu auth");
+                                    break Err(error).context("timed out waiting for tps auth");
                                 }
                                 tokio::time::sleep(TPS_AUTH_POLL_INTERVAL).await;
                             }
