@@ -109,6 +109,10 @@ pub struct Config {
     /// instead of waiting for Enter and checking once. Opt-in: some servers
     /// invalidate the auth ticket on the first check.
     pub poll_tps_auth: Option<bool>,
+    /// Account type sent in the `feilian_v1` login request. Defaults to
+    /// "userid". Deployments whose login setting advertises a different
+    /// account type (e.g. "email") can override it here.
+    pub account_type: Option<String>,
 }
 
 impl fmt::Display for Config {
