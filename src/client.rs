@@ -426,37 +426,31 @@ impl Client {
             Ok(qr) => qr.print(),
             Err(e) => {log::warn!("failed to generate qr code: {e}");}
         }
-        match method {
-            PLATFORM_LARK | PLATFORM_OIDC => {
-                // some servers invalidate the auth ticket on the first check,
-                // so this is disabled by default
-                if self.conf.poll_tps_auth.unwrap_or(false) {
-                    log::info!("waiting up to 180s for tps auth");
-                    let deadline = tokio::time::Instant::now() + TPS_AUTH_TIMEOUT;
-                    loop {
-                        match self.check_tps_token(token).await {
-                            Ok(url) => break Ok(url),
-                            Err(error) if error.to_string().starts_with("tps authentication pending:") => {
-                                log::info!("{error}");
-                                if tokio::time::Instant::now() >= deadline {
-                                    break Err(error).context("timed out waiting for tps auth");
-                                }
-                                tokio::time::sleep(TPS_AUTH_POLL_INTERVAL).await;
-                            }
-                            Err(error) => break Err(error),
+        // Some servers invalidate the auth ticket on the first check, so
+        // polling is opt-in via poll_tps_auth. It now applies to every TPS
+        // platform so unattended setups (headless boxes, routers, containers)
+        // can complete QR-code login without someone pressing Enter over SSH.
+        if self.conf.poll_tps_auth.unwrap_or(false) {
+            log::info!("waiting up to 180s for tps auth ({method})");
+            let deadline = tokio::time::Instant::now() + TPS_AUTH_TIMEOUT;
+            loop {
+                match self.check_tps_token(token).await {
+                    Ok(url) => break Ok(url),
+                    Err(error) if error.to_string().starts_with("tps authentication pending:") => {
+                        log::info!("{error}");
+                        if tokio::time::Instant::now() >= deadline {
+                            break Err(error).context("timed out waiting for tps auth");
                         }
+                        tokio::time::sleep(TPS_AUTH_POLL_INTERVAL).await;
                     }
-                } else {
-                    log::info!("press enter if you finish auth");
-                    let stdin = io::stdin();
-                    stdin.lines().next();
-                    self.check_tps_token(token).await
+                    Err(error) => break Err(error),
                 }
             }
-            _ => {
-                // TODO: add all tps login support
-                bail!("unsupported platform, please contact the developer");
-            }
+        } else {
+            log::info!("finish the auth above, then press enter ({method})");
+            let stdin = io::stdin();
+            stdin.lines().next();
+            self.check_tps_token(token).await
         }
     }
 
@@ -583,7 +577,10 @@ impl Client {
         let enc = utils::feilian_v1_encrypt_password(&password);
         let mut m = Map::new();
         m.insert("login_scene".to_string(), json!(PLATFORM_CORPLINK));
-        m.insert("account_type".to_string(), json!("userid"));
+        m.insert(
+            "account_type".to_string(),
+            json!(self.conf.account_type.as_deref().unwrap_or("userid")),
+        );
         m.insert("account".to_string(), json!(&self.conf.username));
         m.insert("password".to_string(), json!(enc));
 
