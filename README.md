@@ -238,8 +238,12 @@ RUST_LOG=debug ./corplink-rs config.json
   "force_protocol": "udp",
   // poll the TPS auth result until approval (5s interval, 180s timeout) instead
   // of waiting for Enter; opt-in because some servers invalidate the auth
-  // ticket on the first check
-  "poll_tps_auth": false
+  // ticket on the first check. applies to every TPS platform (lark/oidc/weixin/...)
+  "poll_tps_auth": false,
+  // account type sent in the feilian_v1 login request ("userid" by default).
+  // deployments whose login setting advertises another account type (e.g. "email")
+  // can override it here
+  "account_type": "userid"
 }
 ```
 
