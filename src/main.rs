@@ -17,6 +17,7 @@ use is_elevated;
 use dns::DNSManager;
 
 use std::env;
+use std::time::Duration;
 use std::process::exit;
 
 use anyhow::{anyhow, Context, Result};
@@ -86,6 +87,8 @@ async fn run() -> Result<()> {
     let socks5_username = conf.socks5_username.clone().unwrap_or_default();
     let socks5_password = conf.socks5_password.clone().unwrap_or_default();
     let netstack_mode = socks5_listen.is_some();
+    let connect_retry_count = conf.connect_retry_count.unwrap_or(0);
+    let connect_retry_interval = Duration::from_secs(conf.connect_retry_interval_sec.unwrap_or(10));
 
     // netstack/socks5 mode runs entirely in userspace (no kernel TUN device,
     // no system routes/dns), so it does not require elevated privileges.
@@ -123,6 +126,7 @@ async fn run() -> Result<()> {
     let platform = conf.platform.clone();
     let mut c = Client::new(conf).context("failed to initialize client")?;
     let mut logout_retry = true;
+    let mut retries_left = connect_retry_count;
     let wg_conf: Option<WgConf>;
 
     loop {
@@ -143,9 +147,13 @@ async fn run() -> Result<()> {
                     log::warn!("{}", e);
                     logout_retry = false;
                     continue;
-                } else {
+                }
+                if retries_left == 0 {
                     return Err(e);
                 }
+                retries_left -= 1;
+                log::warn!("connect failed, {} retries left: {}", retries_left, e);
+                tokio::time::sleep(connect_retry_interval).await;
             }
         };
     }
