@@ -368,6 +368,7 @@ impl Client {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .append(false)
             .open(&cookie_file)
             .map(io::BufWriter::new)
@@ -445,9 +446,8 @@ impl Client {
         let key = hkdf_sha256(SIGN_SECRET, &[], info.as_bytes(), SIGN_HASH_OUTPUT_SIZE);
 
         let cookie = cookie_header
-            .map(|value| value.to_str().context("invalid Cookie header for signing"))
-            .transpose()?
-            .unwrap_or("");
+            .map(header::HeaderValue::as_bytes)
+            .unwrap_or_default();
         let csrf = csrf_token
             .map(|value| {
                 value
@@ -475,7 +475,7 @@ impl Client {
             url.path().as_bytes(),
             url.query().unwrap_or("").as_bytes(),
             body_hash.as_slice(),
-            cookie.as_bytes(),
+            cookie,
             b"",
             csrf.as_bytes(),
             b"",
@@ -1726,6 +1726,68 @@ mod tests {
         );
     }
 
+    #[test]
+    fn signing_preserves_unicode_cookie_bytes() {
+        let client = test_client();
+        let url = reqwest::Url::parse("https://vpn.example.test/api/vpn/list?timestamp=123").unwrap();
+        let cookie = reqwest::header::HeaderValue::from_bytes("device_name=测试".as_bytes()).unwrap();
+        assert!(cookie.to_str().is_err());
+        let sign = client
+            .sign_request(
+                &crate::api::ApiName::ListVPN,
+                "GET",
+                &url,
+                None,
+                Some(&cookie),
+                None,
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        // Synthetic fixture generated independently with Python hashlib/hmac.
+        assert_eq!(
+            sign,
+            "v1;CAEY/gMiIF1jPsy+5XZFVpEbSlT4/ZuHdSf0axAxYSyOZcVtuQrI"
+        );
+    }
+
+    #[test]
+    fn connect_signature_matches_synthetic_fixture_and_requires_jwt_token() {
+        let client = test_client();
+        let url =
+            reqwest::Url::parse("https://node.example.test/vpn/conn?app_version=3.3.17&timestamp=123")
+                .unwrap();
+        let token = reqwest::header::HeaderValue::from_static("synthetic.jwt.token");
+        let body = r#"{"public_key":"synthetic","otp":""}"#;
+        let sign = client
+            .sign_request(
+                &crate::api::ApiName::ConnectVPN,
+                "POST",
+                &url,
+                Some(body),
+                None,
+                None,
+                Some(&token),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            sign,
+            "v1;CAEYngQiIDiahoyaFjeRwMOTsnY/0g9Eq2Ku/nsOL5P9t3G1ZolJ"
+        );
+        assert!(client
+            .sign_request(
+                &crate::api::ApiName::ConnectVPN,
+                "POST",
+                &url,
+                Some(body),
+                None,
+                None,
+                None,
+            )
+            .is_err());
+    }
+
     async fn start_probe_server(
         barrier: Arc<Barrier>,
         response_delay: Duration,
@@ -1805,6 +1867,48 @@ mod tests {
         client.conf.server = Some(format!("http://127.0.0.1:{port}"));
         client.api_url = ApiUrl::new(&client.conf).unwrap();
         client
+    }
+
+    #[test]
+    fn saving_shorter_cookies_truncates_the_config_relative_file() {
+        let mut client = test_client();
+        let directory = std::env::temp_dir().join(format!(
+            "corplink-cookie-save-{}",
+            client.conf.interface_name.as_ref().unwrap()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        client.conf.conf_file = Some(directory.join("config.json").to_string_lossy().into());
+        let cookie_file = directory.join(format!(
+            "{}_cookies.json",
+            client.conf.interface_name.as_ref().unwrap()
+        ));
+        let url = reqwest::Url::parse("http://127.0.0.1/").unwrap();
+        let insert = |value: String| {
+            let cookie = cookie::Cookie::build("fixture", value)
+                .max_age(cookie::time::Duration::hours(1))
+                .finish();
+            client
+                .cookie
+                .lock()
+                .unwrap()
+                .insert_raw(&cookie, &url)
+                .unwrap();
+        };
+        insert("x".repeat(256));
+        client.save_cookie().unwrap();
+        let previous_size = std::fs::metadata(&cookie_file).unwrap().len();
+        insert("short".into());
+        client.save_cookie().unwrap();
+        assert!(std::fs::metadata(&cookie_file).unwrap().len() < previous_size);
+        let store = cookie_store::CookieStore::load_json_all(std::io::BufReader::new(
+            std::fs::File::open(&cookie_file).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(
+            store.get("127.0.0.1", "/", "fixture").unwrap().value(),
+            "short"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[tokio::test]
