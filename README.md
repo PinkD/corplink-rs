@@ -4,15 +4,21 @@
 
 # 安装
 
-## ArchLinux
+## 从 release 安装
 
 下载 [release](https://github.com/PinkD/corplink-rs/releases) 中的安装包，并安装
 
-```bash
-pacman -U corplink-rs-4.1-1-x86_64.pkg.tar.zst
-```
+目前支持:
 
-> 欢迎贡献其它包管理器的打包脚本
+- Linux
+  - ArchLinux 有单独打包
+  - 欢迎贡献其它包管理器的打包脚本
+- MacOS
+- Windows
+
+## 安装 master/nightly 版本 
+
+可以从 [nightly.link](https://nightly.link/PinkD/corplink-rs/workflows/release/master) 下载
 
 ## 手动编译
 
@@ -334,6 +340,8 @@ graph TD;
 
 # Changelog
 
+- 0.5.6
+  - add request signing support (@fuergaosi233 @lmxx1234567)
 - 0.5.5
   - add more route configs(@yanickxia @zier-one @kfxhjz @ZeppLu)
   - support protocol override config(@n-WN)
