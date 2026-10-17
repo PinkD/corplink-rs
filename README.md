@@ -249,7 +249,19 @@ RUST_LOG=debug ./corplink-rs config.json
   // account type sent in the feilian_v1 login request ("userid" by default).
   // deployments whose login setting advertises another account type (e.g. "email")
   // can override it here
-  "account_type": "userid"
+  "account_type": "userid",
+  // retry failed connect attempts (VPN probe/list/connect errors) before
+  // giving up, waiting connect_retry_interval_sec between attempts. intended
+  // for headless deployments (routers, containers, systemd units) where a
+  // transient network failure during startup should not exit the process --
+  // note supervisors like systemd have their own start-rate limits
+  // (StartLimitBurst) that can turn a crash-restart loop into a permanent
+  // failure. 0/unset keeps the fail-fast default: the first connect error
+  // exits the process and recovery is left to the supervisor.
+  "connect_retry_count": 5,
+  // seconds to wait between connect retries (default 10). only used when
+  // connect_retry_count is set.
+  "connect_retry_interval_sec": 10
 }
 ```
 

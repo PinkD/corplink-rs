@@ -113,6 +113,16 @@ pub struct Config {
     /// "userid". Deployments whose login setting advertises a different
     /// account type (e.g. "email") can override it here.
     pub account_type: Option<String>,
+    /// Retry failed connect attempts before giving up, waiting
+    /// `connect_retry_interval_sec` between attempts. Intended for headless
+    /// deployments (routers, containers, systemd units) where transient
+    /// network failures during startup should not exit the process and
+    /// delegate recovery to a supervisor. `0`/unset keeps the fail-fast
+    /// default.
+    pub connect_retry_count: Option<u32>,
+    /// Seconds to wait between connect retries (default 10). Only used when
+    /// `connect_retry_count` is set.
+    pub connect_retry_interval_sec: Option<u64>,
 }
 
 impl fmt::Display for Config {
