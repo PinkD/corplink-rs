@@ -32,15 +32,16 @@ cd libwg
 ./build.sh
 # if you are using Windows, you can clone and build libwg maunally
 # ref: wireguard-go/Makefile:libwg
+cd ..
 
-cargo build --release
+cargo build --locked --release
 # install corplink-rs to your PATH
 mv target/release/corplink-rs /usr/bin/
 ```
 
 ### windows
 
-**前提**: 需要 Go (≥1.22)、GCC (MinGW-w64)、make、Rust (GNU 工具链)。
+**前提**: 需要 Go（CI 使用 1.26.10）、GCC (MinGW-w64)、make、Rust (GNU 工具链)。
 
 安装工具链后，在 **PowerShell** 中执行：
 
@@ -53,7 +54,7 @@ cd libwg
 cd ..
 rustup toolchain install stable-gnu
 rustup default stable-x86_64-pc-windows-gnu
-cargo build --release
+cargo build --locked --release
 ```
 
 > 编译的 `build.ps1` 会调用 `make libwg`，该目标会以 `CGO_ENABLED=1` 编译 Go 代码。
@@ -267,6 +268,14 @@ curl --socks5-hostname user:pass@127.0.0.1:1080 https://intranet.example.com/
 ```
 
 此模式下 `interface_name`、`use_vpn_dns`、`auto_setup_routes` 等与系统网卡/路由相关的设置不生效。
+
+## 传输与构建兼容性
+
+TCP 客户端只主动连接 VPN 网关，保留同一连接上的双向通信；不会开放入站 TCP 监听。SOCKS UDP ASSOCIATE 必须声明本地 UDP socket 的非零源端口，来源 IP 须与认证的 TCP 对端一致；端口 0 会被拒绝，TCP CONNECT 不受影响。
+
+SOCKS 服务分别限制最多 128 个客户端会话与 128 个目标连接。非回环监听必须同时配置非空用户名和密码；RFC 1929 不加密密码，建议仅监听回环地址，并避免向不可信网络开放代理。
+
+CI 在 Linux、macOS、Windows 构建并测试 Rust 与 Go；工具链和 Actions 固定版本，Rust 使用 `--locked`。Go 子模块更新不改变 C 头文件时也会重新链接静态库。
 
 # 原理和分析
 
