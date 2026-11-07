@@ -1,69 +1,40 @@
-# setup.ps1 — corplink-rs Windows environment setup
-# Automatically downloads wintun.dll to the current directory
-# Usage: powershell -ExecutionPolicy Bypass -File setup.ps1
-
+# Download the pinned amd64 Wintun DLL; this script does not load the driver.
+# Usage: powershell -File setup.ps1
 $ErrorActionPreference = "Stop"
 
 $WintunVersion = "0.14.1"
 $WintunUrl = "https://www.wintun.net/builds/wintun-$WintunVersion.zip"
-$ZipFile = "wintun-$WintunVersion.zip"
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ZipSha256 = "07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51"
+$DllSha256 = "e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce"
+$ScriptDir = $PSScriptRoot
+$Destination = Join-Path $ScriptDir "wintun.dll"
 
-Write-Host "corplink-rs Windows setup" -ForegroundColor Cyan
-Write-Host "========================" -ForegroundColor Cyan
+function Assert-Hash([string]$Path, [string]$Expected) {
+    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $Expected) {
+        throw "SHA-256 mismatch for $Path. Refusing to use this file."
+    }
+}
 
-if (Test-Path "$ScriptDir\wintun.dll") {
-    $existing = Get-Item "$ScriptDir\wintun.dll"
-    Write-Host "[OK] wintun.dll found ($($existing.VersionInfo.FileVersion)), skip download" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Next steps:" -ForegroundColor Yellow
-    Write-Host "  1. Edit config.json with your company code and account info"
-    Write-Host "  2. Run as Administrator: .\corplink-rs.exe config.json"
+if (Test-Path -LiteralPath $Destination) {
+    Assert-Hash $Destination $DllSha256
+    Write-Host "Verified existing Wintun $WintunVersion (amd64)."
     exit 0
 }
 
-Write-Host "[1/3] Downloading wintun.dll (v$WintunVersion) ..." -ForegroundColor Yellow
-Write-Host "        $WintunUrl"
-
+# Use a fresh directory instead of reusing shared predictable ZIP/extract paths.
+$WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ("corplink-wintun-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $WorkDir -ErrorAction Stop | Out-Null
 try {
-    Invoke-WebRequest -Uri $WintunUrl -OutFile "$env:TEMP\$ZipFile" -UseBasicParsing
-} catch {
-    Write-Host "[ERROR] Download failed: $_" -ForegroundColor Red
-    Write-Host ""
-    Write-Host "Manual download:" -ForegroundColor Yellow
-    Write-Host "  1. Visit https://www.wintun.net/"
-    Write-Host "  2. Download wintun-$WintunVersion.zip"
-    Write-Host "  3. Extract bin/amd64/wintun.dll"
-    Write-Host "  4. Copy wintun.dll to this directory"
-    exit 1
+    $ZipFile = Join-Path $WorkDir "wintun.zip"
+    Invoke-WebRequest -Uri $WintunUrl -OutFile $ZipFile -UseBasicParsing
+    Assert-Hash $ZipFile $ZipSha256
+    Expand-Archive -LiteralPath $ZipFile -DestinationPath $WorkDir
+    $DllPath = Join-Path $WorkDir "wintun/bin/amd64/wintun.dll"
+    Assert-Hash $DllPath $DllSha256
+    # Copy without overwrite: do not silently replace a file that appeared meanwhile.
+    [System.IO.File]::Copy($DllPath, $Destination, $false)
+    Assert-Hash $Destination $DllSha256
+    Write-Host "Verified Wintun $WintunVersion (amd64) is ready."
+} finally {
+    Remove-Item -LiteralPath $WorkDir -Recurse -Force
 }
-
-Write-Host "[2/3] Extracting ..." -ForegroundColor Yellow
-try {
-    Expand-Archive -Path "$env:TEMP\$ZipFile" -DestinationPath "$env:TEMP\wintun-extract" -Force
-} catch {
-    Write-Host "[ERROR] Extract failed. Manually extract $env:TEMP\$ZipFile" -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "[3/3] Copying wintun.dll (amd64) ..." -ForegroundColor Yellow
-$DllPath = "$env:TEMP\wintun-extract\wintun-$WintunVersion\bin\amd64\wintun.dll"
-if (-not (Test-Path $DllPath)) {
-    Write-Host "[ERROR] amd64/wintun.dll not found. The wintun package structure may have changed." -ForegroundColor Red
-    Write-Host "        Expected: $DllPath" -ForegroundColor Red
-    exit 1
-}
-
-Copy-Item -Path $DllPath -Destination "$ScriptDir\wintun.dll"
-Remove-Item -Path "$env:TEMP\$ZipFile" -ErrorAction SilentlyContinue
-Remove-Item -Path "$env:TEMP\wintun-extract" -Recurse -Force -ErrorAction SilentlyContinue
-
-Write-Host ""
-Write-Host "[DONE] wintun.dll is ready" -ForegroundColor Green
-Write-Host ""
-Write-Host "Next steps:" -ForegroundColor Yellow
-Write-Host "  1. Edit config.json with your company code and account info"
-Write-Host "  2. Run as Administrator: .\corplink-rs.exe config.json"
-Write-Host ""
-Write-Host "Debug mode:" -ForegroundColor Yellow
-Write-Host "  `$env:RUST_LOG='debug'; .\corplink-rs.exe config.json"

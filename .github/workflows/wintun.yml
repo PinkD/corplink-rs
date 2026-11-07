@@ -1,0 +1,39 @@
+name: verify Wintun integrity
+
+on:
+  pull_request:
+    paths: ['scripts/setup.ps1', '.github/workflows/wintun.yml']
+  push:
+    branches: [master, test, 'fix/**']
+    paths: ['scripts/setup.ps1', '.github/workflows/wintun.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: verify Windows driver download and tamper rejection
+        run: |
+          $testDir = Join-Path $env:RUNNER_TEMP ("corplink-driver-test-" + [Guid]::NewGuid().ToString("N"))
+          New-Item -ItemType Directory -Path $testDir | Out-Null
+          try {
+            Copy-Item scripts/setup.ps1 $testDir
+            pwsh -NoProfile -File "$testDir/setup.ps1"
+            if ($LASTEXITCODE -ne 0) { throw "Pinned driver download failed" }
+            pwsh -NoProfile -File "$testDir/setup.ps1"
+            if ($LASTEXITCODE -ne 0) { throw "Existing DLL verification failed" }
+            Set-Content -LiteralPath "$testDir/wintun.dll" -Value "tampered fixture"
+            pwsh -NoProfile -File "$testDir/setup.ps1"
+            if ($LASTEXITCODE -eq 0) { throw "Tampered DLL was accepted" }
+            $global:LASTEXITCODE = 0
+          } finally {
+            Remove-Item -LiteralPath $testDir -Recurse -Force
+          }

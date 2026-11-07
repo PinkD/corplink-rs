@@ -105,7 +105,7 @@ $env:RUST_LOG="debug"; .\corplink-rs.exe config.json
 
 `corplink-rs` 依赖 [Wintun][6] 虚拟网卡驱动来创建 WireGuard 隧道。由于 Wintun 的许可证要求用户从[官网][6]直接获取，我们无法在 release 包中附带该文件。
 
-`setup.ps1` 脚本会自动从 `wintun.net` 下载并解压 `amd64` 版本的 `wintun.dll` 到当前目录。
+`setup.ps1` 脚本会从 `wintun.net` 下载固定版本，并核对 ZIP 与 `amd64/wintun.dll` 的 SHA-256 后复制到脚本所在目录。已有 DLL 也必须匹配固定校验值；不匹配会停止，不自动覆盖。
 
 手动获取：访问 [wintun.net][6]，下载 zip 包，将 `bin/amd64/wintun.dll` 复制到 `corplink-rs.exe` 所在目录。
 
