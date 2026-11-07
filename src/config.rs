@@ -117,10 +117,11 @@ pub struct Config {
 
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match serde_json::to_string_pretty(self) {
-            Ok(s) => write!(f, "{}", s),
-            Err(e) => write!(f, "<invalid config: {e}>"),
-        }
+        write!(
+            f,
+            "Config {{ company_name: {:?}, credentials: [REDACTED] }}",
+            self.company_name
+        )
     }
 }
 
@@ -131,7 +132,7 @@ impl Config {
             .with_context(|| format!("failed to read config file {file}"))?;
 
         let mut conf: Config = serde_json::from_str(&conf_str[..])
-            .with_context(|| format!("failed to parse config file {file}"))?;
+            .map_err(|_| anyhow::anyhow!("failed to parse config file {file}"))?;
 
         conf.conf_file = Some(file.to_string());
         let mut update_conf = false;
@@ -181,7 +182,7 @@ impl Config {
             .conf_file
             .as_ref()
             .context("config file path missing")?;
-        let data = format!("{}", &self);
+        let data = serde_json::to_vec_pretty(self).context("failed to serialize config")?;
         fs::write(file, data)
             .await
             .with_context(|| format!("failed to write config file {file}"))?;
@@ -207,4 +208,29 @@ pub struct WgConf {
 
     // corplink confs
     pub protocol: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn display_never_serializes_credentials() {
+        let conf: Config = serde_json::from_value(serde_json::json!({
+            "company_name": "test", "username": "test", "password": "password-marker",
+            "private_key": "private-key-marker", "code": "otp-marker", "socks5_password": "socks-marker"
+        })).unwrap();
+        let displayed = conf.to_string();
+        for secret in [
+            "password-marker",
+            "private-key-marker",
+            "otp-marker",
+            "socks-marker",
+        ] {
+            assert!(!displayed.contains(secret));
+        }
+        assert!(serde_json::to_string(&conf)
+            .unwrap()
+            .contains("private-key-marker"));
+    }
+
 }

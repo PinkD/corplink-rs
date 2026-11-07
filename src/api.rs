@@ -210,6 +210,13 @@ impl ApiUrl {
         })
     }
 
+    // Isolate plaintext loopback logging tests from production TLS policy.
+    #[cfg(test)]
+    pub(crate) fn set_loopback_auth_fixture(&mut self, endpoint: std::net::SocketAddr) {
+        assert!(endpoint.ip().is_loopback());
+        self.user_param.url = format!("http://{endpoint}");
+    }
+
     pub fn get_api_url(&self, name: &ApiName) -> String {
         let user_param = &self.user_param;
         let vpn_param = &self.vpn_param;

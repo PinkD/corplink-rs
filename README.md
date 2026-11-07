@@ -128,6 +128,11 @@ $env:RUST_LOG="debug"; .\corplink-rs.exe config.json
 macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需要将配置文件中的 `interface_name` 改为符合正则的名字，例如 `utun12345`  
 另外， `utun` 后的数字类型应该是 `int16` ，如果大于 `32767` 会报错 `Failed to create TUN device: invalid argument` 。具体参考 [#46](https://github.com/PinkD/corplink-rs/issues/46)
 
+## 认证日志与终端
+
+日志和错误只记录接口、状态码等诊断信息，不输出密码、OTP、Cookie 或登录票据。
+第三方 TPS 登录链接仅显示在控制终端，二维码仅显示到交互式标准输出；无控制终端的后台服务需要使用其他登录方式。
+
 ## log level 配置
 
 本项目使用 [env_logger](https://docs.rs/env_logger/latest/env_logger/) 作为 log 库，修改 log level 需要使用环境变量，示例：

@@ -1,4 +1,5 @@
-#[derive(serde::Deserialize, Debug)]
+// Response bodies deliberately do not implement Debug: they can contain credentials.
+#[derive(serde::Deserialize)]
 pub struct Resp<T> {
     pub code: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -10,7 +11,7 @@ pub struct Resp<T> {
     pub action: Option<String>,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespCompany {
     pub name: String,
     pub zh_name: String,
@@ -22,27 +23,27 @@ pub struct RespCompany {
     pub public_key: String,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespLoginMethod {
     pub login_enable_ldap: bool,
     pub login_enable: bool,
     pub login_orders: Vec<String>,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespTpsLoginMethod {
     pub alias: String,
     pub login_url: String,
     pub token: String,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespCorplinkLoginMethod {
     pub mfa: bool,
     pub auth: Vec<String>,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespLogin {
     #[serde(default)]
     pub url: String,
@@ -50,19 +51,19 @@ pub struct RespLogin {
 
 // response of the v1 login endpoint (/api/v1/login), e.g.
 // {"result":"success","next":{"action":"GoToLink","can_skip":false}}
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespLoginV1 {
     #[serde(default)]
     pub result: String,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespOtp {
     pub url: String,
     pub code: String,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespVpnInfo {
     pub api_port: u16,
     pub vpn_port: u16,
@@ -77,7 +78,7 @@ pub struct RespVpnInfo {
     pub timeout: i32,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespWgExtraInfo {
     pub vpn_mtu: u32,
     pub vpn_dns: String,
@@ -89,7 +90,7 @@ pub struct RespWgExtraInfo {
     pub v6_route_split: Option<Vec<String>>,
 }
 
-#[derive(serde::Deserialize, Debug)]
+#[derive(serde::Deserialize)]
 pub struct RespWgInfo {
     pub ip: String,
     pub ipv6: String,
