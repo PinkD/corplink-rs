@@ -268,6 +268,14 @@ curl --socks5-hostname user:pass@127.0.0.1:1080 https://intranet.example.com/
 
 此模式下 `interface_name`、`use_vpn_dns`、`auto_setup_routes` 等与系统网卡/路由相关的设置不生效。
 
+## macOS DNS 恢复
+
+仅在 TUN 模式启用 `use_vpn_dns` 时更改系统 DNS。原设置会以 0600 权限记录在
+`/var/db/corplink-rs/dns.json`，目录权限为 0700，并持有排他锁防止多个进程互相覆盖。
+进程被强制终止后，下次启用 VPN DNS 的 TUN 启动会先恢复设置；不创建后台恢复服务。
+恢复会保留其他程序的 DNS 修改，并跳过已禁用的网络服务。若服务在连接期间被禁用或删除，
+会保留待恢复记录并报错；重新启用对应服务后可再次恢复。
+
 # 原理和分析
 
 [飞连][1] 是基于 [wg-go][2] 魔改的企业级 VPN 产品
