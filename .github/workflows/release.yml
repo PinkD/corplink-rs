@@ -5,16 +5,24 @@ on:
     branches:
       - master
     tags:
-      - "test-release"
-      - "[0-9]+\\.[0-9]+"
+      - "[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.26.10"
+  RUST_VERSION: "1.93.1"
 
 jobs:
   create-release:
     name: create-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: create release
-        uses: actions/create-release@v1
+        uses: actions/create-release@0cb9c9b65d5d1901c1f53e5e66eaf4afd303e70e # v1
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         with:
           tag_name: ${{ github.ref }}
@@ -24,123 +32,174 @@ jobs:
 
   build-archlinux:
     name: build-archlinux
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    if: startsWith(github.ref, 'refs/tags/')
     needs: ["create-release"]
     runs-on: ubuntu-latest
     steps:
       - name: checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: verify release source pins
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/check-package-pins.sh
       - name: build package
         id: build_package
-        uses: PinkD/arch-pkgbuild-builder@v2.4
+        uses: PinkD/arch-pkgbuild-builder@0538747dcab080a5650a9f10525378b8bd17f586 # v2.4
         with:
           target: "pkgbuild"
           pkgname: "pack"
+      - name: attest package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: pack/corplink-rs-*.pkg.tar.zst
       - name: upload package to artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: archlinux-package
           path: pack/corplink-rs-*.pkg.tar.zst
       - name: upload package to release
-        uses: svenstaro/upload-release-action@v2
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: pack/corplink-rs-${{ github.ref_name }}*.pkg.tar.zst
           tag: ${{ github.ref }}
-          overwrite: true
-          file_glob: true
-      - name: create tarball
-        run: |
-          cp pack/pkg/corplink-rs/usr/bin/corplink-rs .
-          cp config/config.json .
-          tar -czf corplink-rs-${{ github.ref_name }}-linux-$(uname -m).tar.gz corplink-rs config.json
-      - name: upload tarball to artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: linux-tarball
-          path: corplink-rs-${{ github.ref_name }}*.tar.gz
-      - name: upload tarball to release
-        uses: svenstaro/upload-release-action@v2
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: corplink-rs-${{ github.ref_name }}*.tar.gz
-          tag: ${{ github.ref }}
-          overwrite: true
+          overwrite: false
           file_glob: true
 
-  build-macos:
-    name: build-macos
+  build-unix:
+    name: build-${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     needs: ["create-release"]
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - name: checkout code
-        uses: actions/checkout@v4
-      - name: setup go
-        uses: actions/setup-go@v5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          go-version: ">=1.22.0"
+          persist-credentials: false
+      - name: setup go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: setup rust
+        run: rustup toolchain install "$RUST_VERSION" --profile minimal && rustup default "$RUST_VERSION"
       - name: build libwg
         run: cd libwg && ./build.sh
       - name: build package
-        run: cargo build --release
+        run: cargo build --locked --release
       - name: build tarball
         run: |
           cd target
           cp release/corplink-rs .
           cp ../config/config.json .
-          tar -czf corplink-rs-${{ github.ref_name }}-macos-$(uname -m).tar.gz corplink-rs config.json
-      - name: upload package to artifact
-        uses: actions/upload-artifact@v6
+          tar -czf corplink-rs-${{ github.ref_name }}-${{ matrix.platform }}-$(uname -m).tar.gz corplink-rs config.json
+      - name: attest package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
         with:
-          name: macos-tarball
+          subject-path: target/corplink-rs-*.tar.gz
+      - name: upload package to artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.platform }}-tarball
           path: target/corplink-rs-*.tar.gz
       - name: upload package to release
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        uses: svenstaro/upload-release-action@v2
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/corplink-rs-*.tar.gz
           tag: ${{ github.ref }}
-          overwrite: true
+          overwrite: false
           file_glob: true
 
   build-windows:
     name: build-windows
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     needs: ["create-release"]
     runs-on: windows-latest
     steps:
       - name: checkout code
-        uses: actions/checkout@v4
-      - name: setup go
-        uses: actions/setup-go@v5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          go-version: ">=1.22.0"
+          persist-credentials: false
+      - name: setup go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
       - name: build libwg
         run: cd libwg && ./build.ps1
       - name: rust install gnu toolchain
-        run: rustup toolchain install stable-gnu
+        run: rustup toolchain install "$env:RUST_VERSION-x86_64-pc-windows-gnu" --profile minimal
       - name: rust use gnu toolchain
-        run: rustup default stable-x86_64-pc-windows-gnu
+        run: rustup default "$env:RUST_VERSION-x86_64-pc-windows-gnu"
       - name: build package
-        run: cargo build --release
+        run: cargo build --locked --release
       - name: build check result
         run: |
           Move-Item -Path "target/release/corplink-rs.exe" -Destination "."
           Move-Item -Path "config/config.json" -Destination "."
           Copy-Item -Path "scripts/setup.ps1" -Destination "."
           Compress-Archive -Path corplink-rs.exe,config.json,setup.ps1 -Destination corplink-rs-${{ github.ref_name }}-windows.zip
+      - name: attest package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: corplink-rs-*-windows.zip
       - name: upload package to artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: windows-zip
           path: corplink-rs-${{ github.ref_name }}-windows.zip
       - name: upload package to release
-        uses: svenstaro/upload-release-action@v2
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # v2
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: corplink-rs-${{ github.ref_name }}-windows.zip
           tag: ${{ github.ref }}
-          overwrite: true
+          overwrite: false
           file_glob: true
+
+  checksums:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-archlinux, build-unix, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: download built artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: checksum release assets
+        working-directory: dist
+        run: sha256sum -- *.pkg.tar.zst *.tar.gz *.zip > SHA256SUMS
+      - name: publish checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" dist/SHA256SUMS --repo "$RELEASE_REPOSITORY"

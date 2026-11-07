@@ -268,6 +268,12 @@ curl --socks5-hostname user:pass@127.0.0.1:1080 https://intranet.example.com/
 
 此模式下 `interface_name`、`use_vpn_dns`、`auto_setup_routes` 等与系统网卡/路由相关的设置不生效。
 
+## 构建与发行验证
+
+发行工作流的 Go/Rust 工具链使用固定版本，Actions 使用提交 SHA，Rust 构建使用 `--locked`。Arch Linux 依然使用发行版的工具链；`pack/PKGBUILD` 固定两个源码归档及 SHA-256，发布新版本前必须同时更新版本、Go gitlink 和校验值。CI 会拒绝以新标签发布旧配方，或发布与 gitlink 不同的 Go 源码。
+
+发行工作流会生成 `SHA256SUMS` 和 GitHub 构建来源证明，且不覆盖已有同名资产。只有包含这些工作流更改后新生成的发行版才具备它们；这不能追溯证明旧发行版的二进制与源码一致。可用 `gh attestation verify <下载的资产> --repo PinkD/corplink-rs` 验证来源，并核对版本与提交。构建来源证明不等同于 Apple Developer ID 签名或公证，也不保证程序没有漏洞。
+
 # 原理和分析
 
 [飞连][1] 是基于 [wg-go][2] 魔改的企业级 VPN 产品
