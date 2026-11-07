@@ -5,7 +5,7 @@ use std::path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use std::{fs, io};
+use std::io;
 
 use anyhow::{anyhow, bail, Context, Result};
 use cookie::Cookie as RawCookie;
@@ -37,6 +37,36 @@ const SIGN_ROOT_KEY_VERSION: u64 = 1;
 const SIGN_SECRET: &[u8] = b"TOK@@AoNfRIX+3bla%";
 const SIGN_HASH_BLOCK_SIZE: usize = 64;
 const SIGN_HASH_OUTPUT_SIZE: usize = 32;
+
+fn cookie_filename(interface_name: &str) -> Result<String> {
+    // Validate on every platform, including Windows drive-relative paths,
+    // NTFS alternate data streams, reserved devices and normalized names.
+    let stem = interface_name
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    let reserved_device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ["COM", "LPT"].iter().any(|prefix| {
+            stem.strip_prefix(prefix).is_some_and(|suffix| {
+                matches!(
+                    suffix,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        });
+    if interface_name.is_empty()
+        || matches!(interface_name, "." | "..")
+        || interface_name.ends_with(['.', ' '])
+        || reserved_device
+        || interface_name
+            .chars()
+            .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+    {
+        bail!("interface name is not a portable cookie file basename");
+    }
+    Ok(format!("{interface_name}_{COOKIE_FILE_SUFFIX}"))
+}
 
 fn merge_additional_routes(
     mut routes: Vec<String>,
@@ -269,25 +299,44 @@ impl Client {
             .interface_name
             .clone()
             .context("interface name missing in config")?;
+        let cookie_name = cookie_filename(&interface_name)?;
         let dir = match path::Path::new(&f).parent() {
             Some(dir) => dir,
             None => path::Path::new("."),
         };
-        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
+        let cookie_file = dir.join(cookie_name);
         log::info!("cookie file is: {}", cookie_file.to_string_lossy());
 
-        let mut cookie_store = {
-            let file = fs::File::open(&cookie_file).map(io::BufReader::new);
-            match file {
-                Ok(file) => CookieStore::load_json_all(file).unwrap_or_else(|e| {
-                    log::warn!(
-                        "failed to load cookie store from {}, using empty store: {e}",
-                        cookie_file.display()
-                    );
+        // Preserve the existing line-oriented cookie file format during this
+        // security update. The dependency's replacement serde API uses an array.
+        #[allow(deprecated)]
+        let mut cookie_store = match crate::secure_file::read(&cookie_file) {
+            Ok(bytes) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if std::fs::symlink_metadata(&cookie_file)?
+                        .permissions()
+                        .mode()
+                        & 0o777
+                        != 0o600
+                    {
+                        crate::secure_file::write(&cookie_file, &bytes)?;
+                    }
+                }
+                CookieStore::load_json_all(io::Cursor::new(bytes)).unwrap_or_else(|_| {
+                    log::warn!("failed to parse cookie store, using empty store");
                     CookieStore::default()
-                }),
-                Err(_) => CookieStore::default(),
+                })
             }
+            Err(error)
+                if error
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.kind() == io::ErrorKind::NotFound) =>
+            {
+                CookieStore::default()
+            }
+            Err(error) => return Err(error).context("failed to safely read cookie store"),
         };
         let has_expired = cookie_store.iter_any().any(|cookie| cookie.is_expired());
         if has_expired {
@@ -364,26 +413,16 @@ impl Client {
             Some(dir) => dir,
             None => path::Path::new("."),
         };
-        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .append(false)
-            .open(&cookie_file)
-            .map(io::BufWriter::new)
-            .with_context(|| {
-                format!(
-                    "failed to open cookie file for writing: {}",
-                    cookie_file.display()
-                )
-            })?;
+        let cookie_file = dir.join(cookie_filename(interface_name)?);
+        let mut bytes = Vec::new();
         let c = self
             .cookie
             .lock()
             .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
-        c.save_json(&mut file)
-            .or_else(|e| bail!("failed to persist cookies to disk: {e}"))?;
+        #[allow(deprecated)] // Keep compatibility with existing cookie files.
+        c.save_json(&mut bytes)
+            .map_err(|_| anyhow!("failed to serialize cookie store"))?;
+        crate::secure_file::write(&cookie_file, &bytes)?;
         Ok(())
     }
 
@@ -2172,5 +2211,50 @@ mod tests {
         let routes = resolve_additional_domains(&["127.0.0.1".to_string()], false).await;
 
         assert_eq!(routes, vec!["127.0.0.1/32"]);
+    }
+    #[test]
+    fn cookie_filenames_reject_cross_platform_path_and_device_syntax() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../escape",
+            "dir/name",
+            r"dir\name",
+            "C:foo",
+            "name:stream",
+            "name<file",
+            "name>file",
+            "name\"file",
+            "name|file",
+            "name?file",
+            "name*file",
+            "name\n",
+            "name\0",
+            "name.",
+            "name ",
+            "CON",
+            "nul.txt",
+            "COM1",
+            "lpt9.txt",
+            "COM¹",
+        ] {
+            assert!(
+                super::cookie_filename(name).is_err(),
+                "accepted unsafe basename: {name:?}"
+            );
+        }
+        for name in [
+            "corplink",
+            "utun3",
+            "vpn_test-2",
+            "vpn.example",
+            "Ethernet 2",
+        ] {
+            assert_eq!(
+                super::cookie_filename(name).unwrap(),
+                format!("{name}_cookies.json")
+            );
+        }
     }
 }

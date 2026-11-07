@@ -335,6 +335,7 @@ dependencies = [
  "sha1 0.10.7",
  "sha2",
  "sudo",
+ "tempfile",
  "terminal_graphics",
  "tinytemplate",
  "tokio",
