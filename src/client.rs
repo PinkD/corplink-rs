@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::path;
 use std::str::FromStr;
@@ -37,6 +36,13 @@ const SIGN_ROOT_KEY_VERSION: u64 = 1;
 const SIGN_SECRET: &[u8] = b"TOK@@AoNfRIX+3bla%";
 const SIGN_HASH_BLOCK_SIZE: usize = 64;
 const SIGN_HASH_OUTPUT_SIZE: usize = 32;
+
+fn secret_header(value: &str) -> Result<header::HeaderValue> {
+    let mut value =
+        header::HeaderValue::from_str(value).context("invalid authentication header value")?;
+    value.set_sensitive(true);
+    Ok(value)
+}
 
 fn merge_additional_routes(
     mut routes: Vec<String>,
@@ -211,10 +217,43 @@ fn corplink_client_builder() -> ClientBuilder {
         .timeout(Duration::from_millis(10000))
 }
 
+// The dependency's default response insertion logs non-Secure cookie values at
+// debug level. Insert through the non-logging API, even when RUST_LOG=trace.
+struct PrivateCookieStore(CookieStoreMutex);
+
+impl PrivateCookieStore {
+    fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, CookieStore>> {
+        self.0.lock()
+    }
+}
+
+impl ReqwestCookieStore for PrivateCookieStore {
+    fn set_cookies(&self, headers: &mut dyn Iterator<Item = &header::HeaderValue>, url: &Url) {
+        let Ok(mut store) = self.lock() else {
+            return;
+        };
+        for value in headers {
+            if let Ok(value) = std::str::from_utf8(value.as_bytes()) {
+                if let Ok(cookie) = RawCookie::parse(value) {
+                    if store.insert_raw(&cookie, url).is_err() {
+                        log::debug!("rejected invalid response cookie");
+                    }
+                }
+            }
+        }
+    }
+
+    fn cookies(&self, url: &Url) -> Option<header::HeaderValue> {
+        let mut value = ReqwestCookieStore::cookies(&self.0, url)?;
+        value.set_sensitive(true);
+        Some(value)
+    }
+}
+
 #[derive(Clone)]
 pub struct Client {
     conf: Config,
-    cookie: Arc<CookieStoreMutex>,
+    cookie: Arc<PrivateCookieStore>,
     c: reqwest::Client,
     probe_client: reqwest::Client,
     api_url: ApiUrl,
@@ -253,12 +292,10 @@ pub async fn get_company_url(code: &str) -> anyhow::Result<RespCompany> {
         .context("get company")?
         .json::<Resp<RespCompany>>()
         .await
-        .context("parse company resp")?;
+        .map_err(|_| anyhow!("invalid company response"))?;
     match resp.code {
         0 => resp.data.context("company response missing data"),
-        _ => Err(anyhow!(resp
-            .message
-            .unwrap_or_else(|| "failed to fetch company info".to_string()))),
+        _ => bail!("company discovery failed (code {})", resp.code),
     }
 }
 
@@ -279,11 +316,8 @@ impl Client {
         let mut cookie_store = {
             let file = fs::File::open(&cookie_file).map(io::BufReader::new);
             match file {
-                Ok(file) => CookieStore::load_json_all(file).unwrap_or_else(|e| {
-                    log::warn!(
-                        "failed to load cookie store from {}, using empty store: {e}",
-                        cookie_file.display()
-                    );
+                Ok(file) => CookieStore::load_json_all(file).unwrap_or_else(|_| {
+                    log::warn!("failed to parse cookie store, using empty store");
                     CookieStore::default()
                 }),
                 Err(_) => CookieStore::default(),
@@ -313,14 +347,13 @@ impl Client {
 
             if let Some(domain) = server_url.domain().or_else(|| server_url.host_str()) {
                 if let Some(csrf_token) = cookie_store.get(domain, "/", "csrf-token") {
-                    let value = header::HeaderValue::from_str(csrf_token.value())
-                        .context("invalid csrf-token header value")?;
+                    let value = secret_header(csrf_token.value())?;
                     headers.insert("csrf-token", value);
                 }
             }
         }
 
-        let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
+        let cookie_store = Arc::new(PrivateCookieStore(CookieStoreMutex::new(cookie_store)));
 
         // Keep probe responses out of the shared cookie store until an endpoint is selected.
         let probe_client = corplink_client_builder()
@@ -383,7 +416,7 @@ impl Client {
             .lock()
             .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
         c.save_json(&mut file)
-            .or_else(|e| bail!("failed to persist cookies to disk: {e}"))?;
+            .map_err(|_| anyhow!("failed to serialize cookie store"))?;
         Ok(())
     }
 
@@ -393,14 +426,7 @@ impl Client {
 
     fn csrf_token_for_url(&self, url: &Url) -> Result<Option<header::HeaderValue>> {
         self.cookie_value_for_url(url, "csrf-token")
-            .and_then(|value| {
-                value
-                    .map(|value| {
-                        header::HeaderValue::from_str(&value)
-                            .context("invalid csrf-token header value")
-                    })
-                    .transpose()
-            })
+            .and_then(|value| value.map(|value| secret_header(&value)).transpose())
     }
 
     fn cookie_value_for_url(&self, url: &Url, name: &str) -> Result<Option<String>> {
@@ -496,7 +522,7 @@ impl Client {
         )))
     }
 
-    async fn request<T: DeserializeOwned + fmt::Debug>(
+    async fn request<T: DeserializeOwned>(
         &mut self,
         api: ApiName,
         body: Option<Map<String, Value>>,
@@ -518,7 +544,7 @@ impl Client {
             let token = self
                 .cookie_value_for_url(&parsed_url, "vpn-token")?
                 .context("vpn-token cookie missing; required for connect request signing")?;
-            Some(header::HeaderValue::from_str(&token).context("invalid jwt-token header value")?)
+            Some(secret_header(&token)?)
         } else {
             None
         };
@@ -550,7 +576,7 @@ impl Client {
             rb = rb.header("jwt-token", jwt_token);
         }
         if let Some(sign_header) = sign_header {
-            rb = rb.header("sign", sign_header);
+            rb = rb.header("sign", secret_header(&sign_header)?);
         }
 
         let resp = rb
@@ -583,13 +609,12 @@ impl Client {
         // and bypass the code-based logout/retry handling, leaving a stale-session
         // run dead with a confusing parse error. So only coerce `data` into T once
         // we know code == 0; otherwise keep the code/message so callers can react.
-        let raw: Resp<Value> = serde_json::from_str(&text).with_context(|| {
-            format!("failed to parse response envelope for api {api:?}: {text}")
-        })?;
+        let raw: Resp<Value> = serde_json::from_str(&text)
+            .map_err(|_| anyhow!("invalid response envelope for API {api:?}"))?;
         let data = match (raw.code, raw.data) {
             (0, Some(v)) => Some(
                 serde_json::from_value::<T>(v)
-                    .with_context(|| format!("failed to parse response data for api {api:?}"))?,
+                    .map_err(|_| anyhow!("invalid response data for API {api:?}"))?,
             ),
             _ => None,
         };
@@ -599,7 +624,7 @@ impl Client {
             data,
             action: raw.action,
         };
-        log::debug!("api {:#?} resp: {:#?}", api, resp);
+        log::debug!("API {:?} returned code {}", api, resp.code);
         Ok(resp)
     }
 
@@ -653,10 +678,11 @@ impl Client {
                 let msg = resp
                     .message
                     .unwrap_or_else(|| "tps token check failed".to_string());
-                if self.conf.poll_tps_auth.unwrap_or(false) && (code == 3040 || msg == "用户未登录") {
-                    bail!("tps authentication pending: {code}: {msg}");
+                if self.conf.poll_tps_auth.unwrap_or(false) && (code == 3040 || msg == "用户未登录")
+                {
+                    bail!("tps authentication pending: {code}");
                 }
-                bail!(msg)
+                bail!("TPS token check failed (code {code})")
             }
         }
     }
@@ -667,12 +693,13 @@ impl Client {
         url: &String,
         token: &String,
     ) -> Result<String> {
-        log::info!("old token is: {token}");
-        log::info!("please scan the QR code or visit the following link to auth corplink:\n{url}");
-        match TerminalQrCode::from_bytes(url.as_bytes()) {
-            Ok(qr) => qr.print(),
-            Err(e) => {
-                log::warn!("failed to generate qr code: {e}");
+        // The login URL contains a ticket: display only on the controlling
+        // terminal, never through the logger or redirected stdout/stderr.
+        utils::show_auth_link(url)?;
+        use std::io::IsTerminal;
+        if io::stdout().is_terminal() {
+            if let Ok(qr) = TerminalQrCode::from_bytes(url.as_bytes()) {
+                qr.print();
             }
         }
         // Some servers invalidate the auth ticket on the first check, so
@@ -760,10 +787,7 @@ impl Client {
         match resp.code {
             0 => Ok(resp.data.context("otp response missing data")?.url),
             _ => {
-                let msg = resp
-                    .message
-                    .unwrap_or_else(|| "request otp code failed".to_string());
-                bail!(msg)
+                bail!("request otp code failed (code {})", resp.code)
             }
         }
     }
@@ -840,7 +864,7 @@ impl Client {
             0 => {
                 let data = resp.data.context("v1 login response missing data")?;
                 if data.result != "success" {
-                    bail!("v1 login returned unexpected result: {}", data.result);
+                    bail!("v1 login returned an unexpected result");
                 }
                 log::info!("login success");
                 self.change_state(State::Login).await?;
@@ -853,7 +877,7 @@ impl Client {
                         let url = Url::parse(&otp_uri).context("failed to parse otp uri")?;
                         for (k, v) in url.query_pairs() {
                             if k == "secret" {
-                                log::info!("got 2fa token: {}", &v);
+                                log::info!("received 2FA seed");
                                 self.conf.code = Some(v.to_string());
                                 self.conf.save().await?;
                                 break;
@@ -870,10 +894,7 @@ impl Client {
                 Ok(())
             }
             _ => {
-                let msg = resp
-                    .message
-                    .unwrap_or_else(|| "v1 login failed".to_string());
-                bail!(msg)
+                bail!("v1 login failed (code {})", resp.code)
             }
         }
     }
@@ -906,7 +927,7 @@ impl Client {
             let url = Url::parse(&otp_uri).context("failed to parse otp uri")?;
             for (k, v) in url.query_pairs() {
                 if k == "secret" {
-                    log::info!("got 2fa token: {}", &v);
+                    log::info!("received 2FA seed");
                     self.conf.code = Some(v.to_string());
                     self.conf.save().await?;
                     break;
@@ -987,10 +1008,7 @@ impl Client {
                 .context("password login response missing data")?
                 .url),
             _ => {
-                let msg = resp
-                    .message
-                    .unwrap_or_else(|| "login with password failed".to_string());
-                bail!(msg)
+                bail!("login with password failed (code {})", resp.code)
             }
         }
     }
@@ -1024,11 +1042,7 @@ impl Client {
             .await?;
         match resp.code {
             0 => Ok(resp.data.context("email login response missing data")?.url),
-            _ => bail!(format!(
-                "failed to login with email code {}: {}",
-                code,
-                resp.message.unwrap_or_else(|| "unknown error".to_string())
-            )),
+            _ => bail!("email login failed (code {})", resp.code),
         }
     }
 
@@ -1046,17 +1060,11 @@ impl Client {
         match resp.code {
             0 => resp.data.context("list vpn response missing data"),
             101 => {
-                let msg = resp
-                    .message
-                    .unwrap_or_else(|| "logout required".to_string());
+                let msg = format!("session expired (code {})", resp.code);
                 self.handle_logout_err(msg).await?;
                 unreachable!()
             }
-            _ => bail!(format!(
-                "failed to list vpn with error {}: {}",
-                resp.code,
-                resp.message.unwrap_or_default()
-            )),
+            _ => bail!("failed to list vpn with error {}", resp.code),
         }
     }
 
@@ -1251,18 +1259,14 @@ impl Client {
         if !status.is_success() {
             bail!("VPN probe returned HTTP status {status}");
         }
-        let resp: Resp<Value> = serde_json::from_str(&body)
-            .with_context(|| format!("failed to parse VPN probe response: {body}"))?;
+        let resp: Resp<Value> =
+            serde_json::from_str(&body).map_err(|_| anyhow!("invalid VPN probe response"))?;
         match resp.code {
             0 => Ok(VpnProbeResponse {
                 latency_ms,
                 set_cookie_headers,
             }),
-            _ => bail!(format!(
-                "failed to ping vpn with error {}: {}",
-                resp.code,
-                resp.message.unwrap_or_default()
-            )),
+            _ => bail!("failed to ping vpn with error {}", resp.code),
         }
     }
 
@@ -1274,9 +1278,8 @@ impl Client {
                 let offset = self.date_offset_sec / TIME_STEP as i32;
                 let raw_otp = totp_offset(code.as_slice(), offset);
                 otp = format!("{:06}", raw_otp.code);
-                log::info!(
-                    "2fa code generated: {}, {} seconds left",
-                    &otp,
+                log::debug!(
+                    "generated 2FA code ({} seconds remaining)",
                     raw_otp.secs_left
                 );
             }
@@ -1302,17 +1305,11 @@ impl Client {
         match resp.code {
             0 => resp.data.context("connect vpn response missing data"),
             101 => {
-                let msg = resp
-                    .message
-                    .unwrap_or_else(|| "logout required".to_string());
+                let msg = format!("session expired (code {})", resp.code);
                 self.handle_logout_err(msg).await?;
                 unreachable!()
             }
-            _ => bail!(format!(
-                "failed to fetch peer info with error {}: {}",
-                resp.code,
-                resp.message.unwrap_or_default()
-            )),
+            _ => bail!("failed to fetch peer info with error {}", resp.code),
         }
     }
 
@@ -1606,11 +1603,7 @@ impl Client {
             .await?;
         match resp.code {
             0 => Ok(()),
-            _ => bail!(format!(
-                "failed to report connection with error {}: {}",
-                resp.code,
-                resp.message.unwrap_or_default()
-            )),
+            _ => bail!("failed to report connection with error {}", resp.code),
         }
     }
 
@@ -1631,11 +1624,7 @@ impl Client {
             .await?;
         match resp.code {
             0 => Ok(()),
-            _ => bail!(format!(
-                "failed to fetch peer info with error {}: {}",
-                resp.code,
-                resp.message.unwrap_or_default()
-            )),
+            _ => bail!("failed to fetch peer info with error {}", resp.code),
         }
     }
 
@@ -1661,7 +1650,7 @@ impl Client {
                             .map(|c| c.value().to_string())
                     };
                     if let Some(token) = token {
-                        if let Ok(value) = header::HeaderValue::from_str(&token) {
+                        if let Ok(value) = secret_header(&token) {
                             req = req.header("csrf-token", value);
                         }
                     }
@@ -2172,5 +2161,87 @@ mod tests {
         let routes = resolve_additional_domains(&["127.0.0.1".to_string()], false).await;
 
         assert_eq!(routes, vec!["127.0.0.1/32"]);
+    }
+    #[tokio::test]
+    async fn credentials_are_absent_from_trace_logs_and_error_chains() {
+        struct Capture(std::sync::Mutex<Vec<String>>);
+        impl log::Log for Capture {
+            fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+                true
+            }
+            fn log(&self, record: &log::Record<'_>) {
+                self.0.lock().unwrap().push(format!("{}", record.args()));
+            }
+            fn flush(&self) {}
+        }
+        static CAPTURE: Capture = Capture(std::sync::Mutex::new(Vec::new()));
+        log::set_logger(&CAPTURE).unwrap();
+        log::set_max_level(log::LevelFilter::Trace);
+        const SECRET: &str = "security-regression-secret-cookie-and-otp";
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let responses = [
+                format!(
+                    r#"{{"code":0,"data":{{"url":"otpauth://test?secret={SECRET}","code":"{SECRET}"}}}}"#
+                ),
+                format!(r#"{{"code":"{SECRET}"}}"#),
+                format!(r#"{{"code":42,"message":"{SECRET}"}}"#),
+            ];
+            for body in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    stream.read_exact(&mut byte).await.unwrap();
+                    request.push(byte[0]);
+                }
+                let headers = String::from_utf8(request).unwrap();
+                let length = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().unwrap())
+                }).unwrap_or(0);
+                stream.read_exact(&mut vec![0_u8; length]).await.unwrap();
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nSet-Cookie: fixture={SECRET}; Path=/\r\nConnection: close\r\n\r\n{body}", body.len());
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let mut client = test_client();
+        client.api_url.set_loopback_auth_fixture(([127, 0, 0, 1], port).into());
+        client.c = reqwest::Client::builder()
+            .no_proxy()
+            .cookie_provider(Arc::clone(&client.cookie))
+            .build()
+            .unwrap();
+        let otp = client.request_otp_code().await.unwrap();
+        assert!(otp.contains(SECRET));
+        for _ in 0..2 {
+            let error = client.request_otp_code().await.err().unwrap();
+            assert!(!format!("{error:#}").contains(SECRET));
+        }
+        server.await.unwrap();
+        let logs = CAPTURE.0.lock().unwrap().join("\n");
+        assert!(
+            !logs.contains(SECRET),
+            "credential appeared in captured logs"
+        );
+        let header = super::secret_header(SECRET).unwrap();
+        assert!(!format!("{header:?}").contains(SECRET));
+    }
+
+    #[test]
+    fn cookie_provider_preserves_domain_isolation_and_marks_values_sensitive() {
+        let client = test_client();
+        let trusted = reqwest::Url::parse("https://127.0.0.1/").unwrap();
+        let unrelated = reqwest::Url::parse("https://unrelated.example/").unwrap();
+        let cookie = reqwest::header::HeaderValue::from_static("session=private-value; Path=/");
+        ReqwestCookieStore::set_cookies(
+            client.cookie.as_ref(),
+            &mut std::iter::once(&cookie),
+            &trusted,
+        );
+        let header = ReqwestCookieStore::cookies(client.cookie.as_ref(), &trusted).unwrap();
+        assert!(header.is_sensitive());
+        assert!(ReqwestCookieStore::cookies(client.cookie.as_ref(), &unrelated).is_none());
     }
 }

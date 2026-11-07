@@ -45,6 +45,38 @@ pub fn gen_public_key_from_private(private_key: &String) -> Result<String> {
     Ok(base64.encode(public_key.to_bytes()))
 }
 
+/// Login tickets are intentionally shown to an interactive user, never a log
+/// sink. A service without a controlling terminal must use another login method.
+pub(crate) fn show_auth_link(value: &str) -> Result<()> {
+    use std::io::Write;
+    if value.chars().any(char::is_control) {
+        anyhow::bail!("invalid authentication link");
+    }
+    let url = reqwest::Url::parse(value).context("invalid authentication link")?;
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        anyhow::bail!("authentication link must use HTTPS without URL credentials");
+    }
+    #[cfg(unix)]
+    let terminal = "/dev/tty";
+    #[cfg(windows)]
+    let terminal = "CONOUT$";
+    let mut terminal = std::fs::OpenOptions::new()
+        .write(true)
+        .open(terminal)
+        .context(
+            "third-party login requires an interactive terminal to display its private link",
+        )?;
+    writeln!(
+        terminal,
+        "Open this private authentication link in your browser:\n{url}"
+    )?;
+    Ok(())
+}
+
 pub fn b64_decode_to_hex(s: &str) -> Result<String> {
     let data = base64
         .decode(s)
