@@ -86,6 +86,10 @@ async fn run() -> Result<()> {
     let socks5_username = conf.socks5_username.clone().unwrap_or_default();
     let socks5_password = conf.socks5_password.clone().unwrap_or_default();
     let netstack_mode = socks5_listen.is_some();
+    if let Some(listen) = &socks5_listen {
+        wg::validate_socks_config(listen, &socks5_username, &socks5_password)
+            .context("invalid SOCKS configuration")?;
+    }
 
     // netstack/socks5 mode runs entirely in userspace (no kernel TUN device,
     // no system routes/dns), so it does not require elevated privileges.
@@ -150,6 +154,8 @@ async fn run() -> Result<()> {
         };
     }
     let wg_conf = wg_conf.ok_or_else(|| anyhow!("wg conf missing after connect loop"))?;
+    wg::build_uapi_config(&wg_conf, netstack_mode)
+        .context("invalid WireGuard configuration")?;
     let protocol = wg_conf.protocol;
     let mut uapi = wg::UAPIClient { name: name.clone() };
     if let Some(listen) = &socks5_listen {

@@ -36,7 +36,7 @@ pub fn gen_wg_keypair() -> (String, String) {
 pub fn gen_public_key_from_private(private_key: &String) -> Result<String> {
     let key = base64
         .decode(private_key)
-        .with_context(|| format!("failed to base64 decode private key {private_key}"))?;
+        .context("failed to base64 decode private key")?;
     let key: [u8; 32] = key
         .try_into()
         .map_err(|_| anyhow!("private key has invalid length"))?;
@@ -45,10 +45,39 @@ pub fn gen_public_key_from_private(private_key: &String) -> Result<String> {
     Ok(base64.encode(public_key.to_bytes()))
 }
 
+/// Validate server-assigned addresses before they can reach WireGuard UAPI or a
+/// platform network command. Parsing also rejects CR/LF and embedded CIDRs.
+pub(crate) fn validated_interface_addresses(
+    ip: &str,
+    ipv6: &str,
+    mask: &str,
+) -> Result<(String, String)> {
+    let ip = ip
+        .parse::<std::net::Ipv4Addr>()
+        .context("invalid assigned IPv4 address")?;
+    if mask.is_empty() || !mask.bytes().all(|b| b.is_ascii_digit()) {
+        anyhow::bail!("invalid assigned IPv4 prefix");
+    }
+    let prefix = mask.parse::<u8>().context("invalid assigned IPv4 prefix")?;
+    if prefix > 32 {
+        anyhow::bail!("assigned IPv4 prefix exceeds 32");
+    }
+    let address6 = if ipv6.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "{}/128",
+            ipv6.parse::<std::net::Ipv6Addr>()
+                .context("invalid assigned IPv6 address")?
+        )
+    };
+    Ok((format!("{ip}/{prefix}"), address6))
+}
+
 pub fn b64_decode_to_hex(s: &str) -> Result<String> {
     let data = base64
         .decode(s)
-        .with_context(|| format!("failed to base64 decode string {s}"))?;
+        .context("failed to base64 decode key")?;
     let mut hex = String::new();
     for c in data {
         hex.push_str(format!("{c:02x}").as_str());
@@ -488,5 +517,33 @@ mod tests {
         let out = sorted(subtract_cidr_from_cidr("10.0.0.0/16", "10.0.5.7/24"));
         let expected = sorted(subtract_cidr_from_cidr("10.0.0.0/16", "10.0.5.0/24"));
         assert_eq!(out, expected);
+    }
+    #[test]
+    fn assigned_addresses_reject_uapi_injection_and_wrong_family() {
+        assert_eq!(
+            super::validated_interface_addresses("192.0.2.3", "2001:0db8::1", "24").unwrap(),
+            ("192.0.2.3/24".into(), "2001:db8::1/128".into())
+        );
+        for (ip, ipv6, mask) in [
+            ("192.0.2.3\nprivate_key=attacker", "", "24"),
+            ("192.0.2.3", "::1\nreplace_peers=true", "24"),
+            ("192.0.2.3", "192.0.2.4", "24"),
+            ("::1", "", "24"),
+            ("192.0.2.3", "", "33"),
+            ("192.0.2.3", "", "24\n"),
+        ] {
+            assert!(super::validated_interface_addresses(ip, ipv6, mask).is_err());
+        }
+    }
+
+    #[test]
+    fn private_key_errors_do_not_echo_input() {
+        let value = "private-key-marker-with-invalid-base64!".to_owned();
+        assert!(!format!(
+            "{:#}",
+            super::gen_public_key_from_private(&value).unwrap_err()
+        )
+        .contains(&value));
+        assert!(!format!("{:#}", super::b64_decode_to_hex(&value).unwrap_err()).contains(&value));
     }
 }

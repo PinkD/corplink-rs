@@ -268,6 +268,12 @@ curl --socks5-hostname user:pass@127.0.0.1:1080 https://intranet.example.com/
 
 此模式下 `interface_name`、`use_vpn_dns`、`auto_setup_routes` 等与系统网卡/路由相关的设置不生效。
 
+## VPN 配置校验
+
+服务端下发的密钥、IPv4/IPv6 地址、掩码、路由、DNS、端点和 MTU 会在传入 WireGuard 前校验。
+SOCKS 监听地址必须是 IP 与端口；非回环地址必须同时配置非空用户名和密码，每项最长 255 字节。
+推荐仅监听 `127.0.0.1` 或 `::1`，SOCKS 用户名密码认证本身不会加密传输。
+
 # 原理和分析
 
 [飞连][1] 是基于 [wg-go][2] 魔改的企业级 VPN 产品
