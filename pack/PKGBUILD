@@ -4,6 +4,10 @@ pkgname=corplink-rs
 _pkgbase=corplink-rs
 pkgver=5.6
 pkgrel=1
+# This release recipe stays pinned to 5.6 until the maintainer prepares the next
+# release. Update pkgver, this gitlink and BOTH hashes together; release CI checks
+# the tag/gitlink and makepkg verifies the downloaded archives.
+_wgcommit=8936d2de0f2587fabeff9be7053eaef719d506d7
 pkgdesc='Corplink client written in Rust'
 arch=('i686' 'x86_64')
 url='https://github.com/PinkD/corplink-rs'
@@ -11,25 +15,27 @@ license=('GPL-2.0-only')
 makedepends=('cargo' 'go' 'clang')
 source=(
   "$pkgname.$pkgver.tar.gz"::"https://github.com/PinkD/corplink-rs/archive/$pkgver.tar.gz"
-  "wireguard-go"::"git+https://github.com/PinkD/wireguard-go"
+  "wireguard-go-$_wgcommit.tar.gz"::"https://github.com/PinkD/wireguard-go/archive/$_wgcommit.tar.gz"
 )
 
-# use SKIP to avoid update PKGBUILD everytime
 sha256sums=(
-  'SKIP'
-  'SKIP'
+  '88bceac6897ae64b6363580bffe2233e17203f4d85c99d7786ae39fcc7eaba8d'
+  'bd8c0794fea6c57a0d6f1b6813bed606a7c0896d3ded2bb7fe6e14ae8406d6c3'
 )
 backup=(etc/corplink/config.json)
 
 build() {
   # build libwg
-  cd "$srcdir/wireguard-go"
+  cd "$srcdir/wireguard-go-$_wgcommit"
+  # GitHub archives have no .git/version.go; the upstream Makefile preserves
+  # this fallback when git describe is unavailable.
+  printf 'package main\n\nconst Version = "%s"\n' "$_wgcommit" > version.go
   make libwg
   cp libwg.* "$srcdir/$_pkgbase-$pkgver/libwg/"
 
   # build corplink-rs
   cd "$srcdir/$_pkgbase-$pkgver"
-  cargo build --release
+  cargo build --locked --release
 }
 
 package() {
