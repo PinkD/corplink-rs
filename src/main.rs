@@ -7,6 +7,7 @@ mod resp;
 mod state;
 mod template;
 mod totp;
+mod transport;
 mod utils;
 mod wg;
 

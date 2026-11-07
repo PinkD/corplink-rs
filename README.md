@@ -136,6 +136,12 @@ macos 要求 tun 设备的名称满足正则表达式 `utun[0-9]*` ，因此需�
 RUST_LOG=debug ./corplink-rs config.json
 ```
 
+## HTTPS 与企业 CA
+
+发现服务器、登录和网关探测都要求 HTTPS，并验证证书链和主机名；不会跟随认证重定向。
+使用私有 CA 的部署可配置 `"ca_cert_file": "/path/to/company-ca.pem"`。该 PEM 证书仅由本客户端信任，不会安装到系统。
+证书仍必须匹配网关域名或 IP；添加 CA 不会关闭主机名验证。请从管理员处核实 CA 来源，不要使用关闭 TLS 验证的办法绕过错误。
+
 # 配置文件实例
 
 最小配置

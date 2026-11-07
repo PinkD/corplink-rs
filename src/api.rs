@@ -146,10 +146,14 @@ impl ApiUrl {
     pub fn new(conf: &Config) -> Result<ApiUrl> {
         let os = "Android".to_string();
         let version = "2".to_string();
-        let server_url = conf
-            .server
-            .clone()
-            .context("server url missing in config")?;
+        let server_url = crate::transport::validate_server_url(
+            conf.server
+                .as_deref()
+                .context("server url missing in config")?,
+        )?
+        .as_str()
+        .trim_end_matches('/')
+        .to_owned();
         let mut api_template = HashMap::new();
 
         api_template.insert(ApiName::LoginMethod, Template::new(URL_GET_LOGIN_METHOD));

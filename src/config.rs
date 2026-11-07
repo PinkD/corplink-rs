@@ -61,6 +61,8 @@ pub struct Config {
     pub public_key: Option<String>,
     pub private_key: Option<String>,
     pub server: Option<String>,
+    /// Optional PEM CA bundle trusted only by this client (never installed system-wide).
+    pub ca_cert_file: Option<String>,
     pub interface_name: Option<String>,
     pub debug_wg: Option<bool>,
     #[serde(skip_serializing)]
@@ -133,6 +135,9 @@ impl Config {
         let mut conf: Config = serde_json::from_str(&conf_str[..])
             .with_context(|| format!("failed to parse config file {file}"))?;
 
+        if let Some(server) = &conf.server {
+            crate::transport::validate_server_url(server)?;
+        }
         conf.conf_file = Some(file.to_string());
         let mut update_conf = false;
         if conf.interface_name.is_none() {
