@@ -61,13 +61,18 @@ pub const ETIMEDOUT: i32 = 110;
 
 #[tokio::main]
 async fn main() {
-    if let Err(err) = run().await {
-        log::error!("{:#}", err);
-        exit(EPERM);
-    }
+    let code = match run().await {
+        Ok(code) => code,
+        Err(err) => {
+            log::error!("{:#}", err);
+            EPERM
+        }
+    };
+    // run() has completed cleanup and dropped its locks before process exit.
+    exit(code);
 }
 
-async fn run() -> Result<()> {
+async fn run() -> Result<i32> {
     // NOTE: If you want to debug, you should set `RUST_LOG` env to `debug` and run corplink-rs in root
     //  because `check_privilege` will call sudo and drop env if you're not root
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -97,6 +102,12 @@ async fn run() -> Result<()> {
     let use_vpn_dns = conf.use_vpn_dns.unwrap_or(false);
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let dns_backup_filename = conf.dns_backup_filename.clone();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let mut dns_manager = if use_vpn_dns && !netstack_mode {
+        Some(DNSManager::new(dns_backup_filename))
+    } else {
+        None
+    };
 
     if conf.server.is_none() {
         let resp = client::get_company_url(conf.company_name.as_str())
@@ -150,91 +161,104 @@ async fn run() -> Result<()> {
         };
     }
     let wg_conf = wg_conf.ok_or_else(|| anyhow!("wg conf missing after connect loop"))?;
-    let protocol = wg_conf.protocol;
     let mut uapi = wg::UAPIClient { name: name.clone() };
-    if let Some(listen) = &socks5_listen {
-        log::info!("start wg-corplink (netstack/socks5) on {}", listen);
-        wg::start_wg_go_netstack(&wg_conf, listen, &socks5_username, &socks5_password, with_wg_log)
+    let mut wg_attempted = false;
+    // Capture setup failures as well as normal termination, so every successful
+    // server connection reaches the same local cleanup and disconnect path.
+    let session_result: Result<i32> = async {
+        wg_attempted = true;
+        if let Some(listen) = &socks5_listen {
+            wg::start_wg_go_netstack(
+                &wg_conf,
+                listen,
+                &socks5_username,
+                &socks5_password,
+                with_wg_log,
+            )
             .context("failed to start wg-corplink in netstack mode")?;
-        uapi.config_wg_netstack(&wg_conf)
-            .await
-            .context("failed to config netstack interface with uapi")?;
-        if socks5_username.is_empty() {
-            log::info!("socks5 proxy ready at {} (no auth)", listen);
-        } else {
+            uapi.config_wg_netstack(&wg_conf)
+                .await
+                .context("failed to configure netstack")?;
             log::info!(
-                "socks5 proxy ready at {} (username/password auth required)",
-                listen
+                "SOCKS proxy ready at {} ({})",
+                listen,
+                if socks5_username.is_empty() {
+                    "no authentication"
+                } else {
+                    "username/password required"
+                }
             );
+        } else {
+            wg::start_wg_go(&name, wg_conf.protocol, with_wg_log)
+                .context("failed to start wg-corplink")?;
+            uapi.config_wg(&wg_conf)
+                .await
+                .context("failed to configure interface")?;
         }
-    } else {
-        log::info!("start wg-corplink for {}", &name);
-        wg::start_wg_go(&name, protocol, with_wg_log)
-            .with_context(|| format!("failed to start wg-corplink for {}", name))?;
-        uapi.config_wg(&wg_conf)
-            .await
-            .with_context(|| format!("failed to config interface with uapi for {name}"))?;
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if let Some(manager) = dns_manager.as_mut() {
+            manager
+                .set_dns(vec![&wg_conf.dns], vec![])
+                .context("failed to set VPN DNS")?;
+        }
+        tokio::select! {
+            _ = wait_for_shutdown_signal() => Ok(0),
+            _ = uapi.check_wg_connection() => {
+                log::warn!("last handshake timeout");
+                Ok(ETIMEDOUT)
+            },
+        }
     }
+    .await;
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let mut dns_manager = DNSManager::new(dns_backup_filename);
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if use_vpn_dns && !netstack_mode {
-        match dns_manager.set_dns(vec![&wg_conf.dns], vec![]) {
-            Ok(_) => {}
-            Err(err) => {
-                log::warn!("failed to set dns: {}", err);
+    finish_session(
+        session_result,
+        || {
+            // Try DNS restoration first, but still stop the device on failure.
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            let dns_result = match dns_manager.as_mut() {
+                Some(manager) => manager.restore_dns().context("failed to restore DNS"),
+                None => Ok(()),
+            };
+            if wg_attempted {
+                wg::stop_wg_go();
             }
-        }
-    }
-
-    let mut exit_code = 0;
-    tokio::select! {
-        _ = wait_for_shutdown_signal() => {},
-
-        // keep alive
-        // _ = c.keep_alive_vpn(&wg_conf, 60) => {
-        //     exit_code = ETIMEDOUT;
-        // },
-
-        // check wg handshake and exit if timeout
-        _ = async {
-            uapi.check_wg_connection().await;
-            log::warn!("last handshake timeout");
-        } => {
-            exit_code = ETIMEDOUT;
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            return dns_result;
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            Ok(())
         },
-    }
-
-    // shutdown
-    log::info!("disconnecting vpn...");
-    if let Err(e) = c.disconnect_vpn(&wg_conf).await {
-        log::warn!("failed to disconnect vpn: {}", e)
-    };
-
-    // only logout for feilian_v1
-    if platform.as_deref() == Some(config::PLATFORM_CORPLINK_V1) {
-        log::info!("logging out current terminal...");
-        if let Err(e) = c.logout().await {
-            log::warn!("failed to logout: {}", e)
-        };
-    }
-
-    wg::stop_wg_go();
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if use_vpn_dns && !netstack_mode {
-        match dns_manager.restore_dns() {
-            Ok(_) => {}
-            Err(err) => {
-                log::warn!("failed to delete dns: {}", err);
+        async {
+            log::info!("disconnecting VPN...");
+            if let Err(error) = c.disconnect_vpn(&wg_conf).await {
+                log::warn!("failed to disconnect VPN: {}", error);
             }
-        }
-    }
+            if platform.as_deref() == Some(config::PLATFORM_CORPLINK_V1) {
+                if let Err(error) = c.logout().await {
+                    log::warn!("failed to logout: {}", error);
+                }
+            }
+        },
+    )
+    .await
+}
 
-    log::info!("reach exit");
-    exit(exit_code)
+// Local cleanup must finish before remote requests can wait on an unavailable
+// server. Cleanup errors remain visible without losing the original session error.
+async fn finish_session(
+    session: Result<i32>,
+    local_cleanup: impl FnOnce() -> Result<()>,
+    remote_cleanup: impl std::future::Future<Output = ()>,
+) -> Result<i32> {
+    let local = local_cleanup();
+    remote_cleanup.await;
+    if let Err(error) = local {
+        if let Err(session_error) = &session {
+            log::error!("VPN session failed: {session_error:#}");
+        }
+        return Err(error);
+    }
+    session
 }
 
 // Resolve when the process is asked to terminate: ctrl+c (SIGINT) or, on unix,
@@ -299,4 +323,60 @@ fn print_version() {
     let pkg_name = env!("CARGO_PKG_NAME");
     let pkg_version = env!("CARGO_PKG_VERSION");
     log::info!("running {}@{}", pkg_name, pkg_version);
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn partial_startup_failure_still_runs_local_and_remote_cleanup() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let local = events.clone();
+        let remote = events.clone();
+        let result = finish_session(
+            Err(anyhow!("setup failed")),
+            || {
+                local.lock().unwrap().push("local");
+                Ok(())
+            },
+            async {
+                remote.lock().unwrap().push("remote");
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "setup failed");
+        assert_eq!(*events.lock().unwrap(), ["local", "remote"]);
+    }
+
+    #[tokio::test]
+    async fn dns_restore_failure_is_returned_after_remote_cleanup() {
+        let ran = std::sync::atomic::AtomicBool::new(false);
+        let result = finish_session(Ok(ETIMEDOUT), || Err(anyhow!("restore failed")), async {
+            ran.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+        .await;
+        assert_eq!(result.unwrap_err().to_string(), "restore failed");
+        assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn unavailable_remote_cannot_delay_local_cleanup() {
+        let ran = std::sync::atomic::AtomicBool::new(false);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            finish_session(
+                Ok(0),
+                || {
+                    ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                },
+                std::future::pending::<()>(),
+            ),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
 }

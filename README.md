@@ -268,6 +268,11 @@ curl --socks5-hostname user:pass@127.0.0.1:1080 https://intranet.example.com/
 
 此模式下 `interface_name`、`use_vpn_dns`、`auto_setup_routes` 等与系统网卡/路由相关的设置不生效。
 
+## 连接失败后的清理
+
+成功建立服务端会话后，即使本地 WireGuard 或 DNS 配置失败，也会尝试清理本地网络并断开服务端会话。
+恢复 DNS 和停止本地设备会先于远端断开请求执行；DNS 恢复失败会作为退出错误返回。
+
 # 原理和分析
 
 [飞连][1] 是基于 [wg-go][2] 魔改的企业级 VPN 产品
