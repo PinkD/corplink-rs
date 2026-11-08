@@ -268,6 +268,13 @@ curl --socks5-hostname user:pass@127.0.0.1:1080 https://intranet.example.com/
 
 此模式下 `interface_name`、`use_vpn_dns`、`auto_setup_routes` 等与系统网卡/路由相关的设置不生效。
 
+## Linux DNS 恢复
+
+仅在 TUN 模式启用 `use_vpn_dns` 时更改 `/etc/resolv.conf`；备份失败时拒绝覆盖原文件。
+`dns_backup_filename` 必须是单个文件名，不能是路径。原文件或符号链接及私有恢复记录会被保留，
+排他锁防止不同备份名的进程同时修改 DNS。进程被强制终止后，下次启用 VPN DNS 的 TUN 启动
+会先尝试恢复。若 DNS 已被其他程序修改或备份身份改变，则保留备份并报错，避免覆盖外部修改。
+
 # 原理和分析
 
 [飞连][1] 是基于 [wg-go][2] 魔改的企业级 VPN 产品
