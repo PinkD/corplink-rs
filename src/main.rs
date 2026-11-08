@@ -97,6 +97,19 @@ async fn run() -> Result<()> {
     let use_vpn_dns = conf.use_vpn_dns.unwrap_or(false);
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let dns_backup_filename = conf.dns_backup_filename.clone();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let mut dns_manager = if use_vpn_dns && !netstack_mode {
+        #[cfg(target_os = "macos")]
+        let mut manager = DNSManager::new(dns_backup_filename)?;
+        #[cfg(target_os = "linux")]
+        let manager = DNSManager::new(dns_backup_filename);
+        #[cfg(target_os = "macos")]
+        manager.recover_dns().context("failed to recover previous DNS settings")?;
+        Some(manager)
+    } else {
+        None
+    };
+
 
     if conf.server.is_none() {
         let resp = client::get_company_url(conf.company_name.as_str())
@@ -177,11 +190,9 @@ async fn run() -> Result<()> {
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let mut dns_manager = DNSManager::new(dns_backup_filename);
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if use_vpn_dns && !netstack_mode {
-        match dns_manager.set_dns(vec![&wg_conf.dns], vec![]) {
+    if let Some(manager) = dns_manager.as_mut() {
+        let servers = wg_conf.dns.split(',').filter(|s| !s.is_empty()).collect();
+        match manager.set_dns(servers, vec![]) {
             Ok(_) => {}
             Err(err) => {
                 log::warn!("failed to set dns: {}", err);
@@ -224,8 +235,8 @@ async fn run() -> Result<()> {
     wg::stop_wg_go();
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if use_vpn_dns && !netstack_mode {
-        match dns_manager.restore_dns() {
+    if let Some(manager) = dns_manager.as_mut() {
+        match manager.restore_dns() {
             Ok(_) => {}
             Err(err) => {
                 log::warn!("failed to delete dns: {}", err);
