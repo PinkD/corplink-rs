@@ -20,11 +20,13 @@ fn main() {
     // Tell cargo to look for shared libraries in the specified directory
     println!("cargo:rustc-link-search=./libwg");
 
-    // Tell cargo to tell rustc to link the shared library.
-    println!("cargo:rustc-link-lib=wg");
+    // Tell cargo to tell rustc to link the static library.
+    println!("cargo:rustc-link-lib=static=wg");
 
     // Tell cargo to invalidate the built crate whenever the wrapper changes
     println!("cargo:rerun-if-changed=./libwg/libwg.h");
+    // A Go security update need not change the header; relink the archive too.
+    println!("cargo:rerun-if-changed=./libwg/libwg.a");
 
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
