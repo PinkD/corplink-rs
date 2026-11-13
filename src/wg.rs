@@ -187,38 +187,13 @@ fn cidr(value: &str, field: &str, require_prefix: bool) -> Result<String> {
 }
 
 fn endpoint(value: &str) -> Result<String> {
-    if let Ok(addr) = value.parse::<SocketAddr>() {
-        ensure!(addr.port() != 0, "endpoint port must be nonzero");
-        return Ok(addr.to_string());
-    }
-    // Preserve DNS endpoint support without passing unchecked protocol text.
-    let (host, port) = value
-        .rsplit_once(':')
-        .context("endpoint requires a host and port")?;
-    ensure!(
-        !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()),
-        "invalid endpoint port"
-    );
-    ensure!(
-        port.parse::<u16>().context("invalid endpoint port")? != 0,
-        "endpoint port must be nonzero"
-    );
-    let domain = host.strip_suffix('.').unwrap_or(host);
-    ensure!(
-        !domain.is_empty()
-            && domain.len() <= 253
-            && domain.split('.').all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-            }),
-        "invalid endpoint hostname"
-    );
-    Ok(format!("{host}:{port}"))
+    // The WireGuard UAPI endpoint is IP:port or [IPv6]:port. Its Go bind
+    // parses a numeric address too; it does not resolve DNS hostnames here.
+    let addr: SocketAddr = value
+        .parse()
+        .context("endpoint must be an IP address and port")?;
+    ensure!(addr.port() != 0, "endpoint port must be nonzero");
+    Ok(addr.to_string())
 }
 
 fn key_hex(value: &str, field: &str) -> Result<String> {
@@ -471,16 +446,48 @@ mod tests {
         assert!(build_uapi_config(&conf, false).is_err());
         assert!(cidr("10.0.0.1/33", "test", true).is_err());
         assert!(cidr("::1/129", "test", true).is_err());
-        assert!(endpoint("vpn.example:51820").is_ok());
-        assert!(endpoint("[2001:db8::1]:51820").is_ok());
         for invalid in [
-            "vpn.example:0",
-            "vpn.example:+80",
-            "vpn.example:65536",
-            "bad host:80",
-            "-option:80",
+            "192.0.2.1:0",
+            "192.0.2.1:+80",
+            "192.0.2.1:65536",
+            "2001:db8::1:51820",
         ] {
             assert!(endpoint(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn endpoint_uses_numeric_uapi_address_forms() {
+        for value in [
+            "192.0.2.1:1",
+            "192.0.2.1:65535",
+            "[2001:db8::1]:51820",
+            "[::ffff:192.0.2.1]:51820",
+            "[fe80::1%3]:51820",
+        ] {
+            assert!(endpoint(value).is_ok(), "{value}");
+        }
+        for value in ["vpn.example:51820", "test.com.:1234", "[fe80::1%en0]:51820"] {
+            assert!(endpoint(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
+    fn endpoint_cannot_add_a_uapi_command_or_ffi_terminator() {
+        // The old raw interpolation turns part of a single value into a
+        // separate UAPI command. This fixture never calls the native library.
+        let injected = "192.0.2.1:51820\nremove=true";
+        let unchecked = format!("endpoint={injected}\n");
+        assert!(unchecked.lines().any(|line| line == "remove=true"));
+        for value in [
+            injected,
+            "192.0.2.1:51820\r\nremove=true",
+            "192.0.2.1:51820\0",
+        ] {
+            let mut conf = config();
+            conf.peer_address = value.into();
+            assert!(build_uapi_config(&conf, false).is_err());
+            assert!(build_uapi_config(&conf, true).is_err());
         }
     }
 
