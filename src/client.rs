@@ -1407,12 +1407,9 @@ impl Client {
             .as_ref()
             .context("private key missing in config")?
             .clone();
-        let ip_mask = wg_info.ip_mask.parse::<u32>().context("invalid ip mask")?;
-        let address = format!("{}/{}", wg_info.ip, ip_mask);
-        let has_ipv6_address = !wg_info.ipv6.is_empty();
-        let address6 = has_ipv6_address
-            .then_some(format!("{}/128", wg_info.ipv6))
-            .unwrap_or_default();
+        let (address, address6) =
+            utils::validated_interface_addresses(&wg_info.ip, &wg_info.ipv6, &wg_info.ip_mask)?;
+        let has_ipv6_address = !address6.is_empty();
         let mut allowed_ips = match self.conf.route_mode.clone().unwrap_or_default() {
             crate::config::RouteMode::Split => {
                 log::info!("route_mode = split");
