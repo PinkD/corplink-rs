@@ -1,5 +1,4 @@
 use std::fmt;
-use tokio::fs;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -126,14 +125,20 @@ impl fmt::Display for Config {
 
 impl Config {
     pub async fn from_file(file: &str) -> Result<Config> {
-        let conf_str = fs::read_to_string(file)
-            .await
+        let conf_str = crate::secure_file::read(std::path::Path::new(file))
             .with_context(|| format!("failed to read config file {file}"))?;
 
-        let mut conf: Config = serde_json::from_str(&conf_str[..])
-            .with_context(|| format!("failed to parse config file {file}"))?;
+        let mut conf: Config = serde_json::from_slice(&conf_str)
+            .map_err(|_| anyhow::anyhow!("failed to parse config file {file}"))?;
 
         conf.conf_file = Some(file.to_string());
+        #[cfg(unix)]
+        let mut update_conf = {
+            use std::os::unix::fs::PermissionsExt;
+            // Migrate legacy readable files via the same checked atomic writer.
+            std::fs::symlink_metadata(file)?.permissions().mode() & 0o777 != 0o600
+        };
+        #[cfg(not(unix))]
         let mut update_conf = false;
         if conf.interface_name.is_none() {
             conf.interface_name = Some(DEFAULT_INTERFACE_NAME.to_string());
@@ -181,9 +186,8 @@ impl Config {
             .conf_file
             .as_ref()
             .context("config file path missing")?;
-        let data = format!("{}", &self);
-        fs::write(file, data)
-            .await
+        let data = serde_json::to_vec_pretty(self).context("failed to serialize config")?;
+        crate::secure_file::write(std::path::Path::new(file), &data)
             .with_context(|| format!("failed to write config file {file}"))?;
         Ok(())
     }
@@ -207,4 +211,101 @@ pub struct WgConf {
 
     // corplink confs
     pub protocol: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn loading_legacy_config_migrates_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.json");
+        std::fs::write(
+            &path,
+            br#"{"company_name":"test","username":"test","server":"https://example.test"}"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let alias = directory.path().join("config-backup.json");
+        std::fs::hard_link(&path, &alias).unwrap();
+        let original = std::fs::read(&alias).unwrap();
+        let conf = Config::from_file(path.to_str().unwrap()).await.unwrap();
+        assert!(conf.private_key.is_some());
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        // Loading and migrating must replace only the selected pathname; neither
+        // reading nor saving may change a hard-linked backup's bytes or mode.
+        assert_eq!(std::fs::read(&alias).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&alias).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
+        assert!(Config::from_file(path.to_str().unwrap()).await.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn root_migration_preserves_user_owned_config() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("requires root; run this exact test under sudo in CI");
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("user-home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = home.join("config.json");
+        std::fs::write(
+            &path,
+            br#"{"company_name":"test","username":"owner-test","server":"https://example.test"}"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // Model sudo using a normal user's home/config, without changing any
+        // account or touching that user's actual home directory.
+        for fixture in [&home, &path] {
+            let file = std::fs::File::open(fixture).unwrap();
+            assert_eq!(unsafe { libc::fchown(file.as_raw_fd(), 65534, 65534) }, 0);
+        }
+        let conf = Config::from_file(path.to_str().unwrap()).await.unwrap();
+        assert_eq!(conf.username, "owner-test");
+        assert!(conf.private_key.is_some());
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!((metadata.uid(), metadata.gid()), (65534, 65534));
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        let saved: Config = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.username, conf.username);
+        assert_eq!(saved.private_key, conf.private_key);
+        let parent = std::fs::metadata(&home).unwrap();
+        assert_eq!((parent.uid(), parent.gid()), (65534, 65534));
+        assert_eq!(parent.mode() & 0o777, 0o700);
+
+        let cookie = home.join("cookies.json");
+        crate::secure_file::write_with_owner_fallback(&cookie, b"cache", Some(&path)).unwrap();
+        let metadata = std::fs::metadata(&cookie).unwrap();
+        assert_eq!((metadata.uid(), metadata.gid()), (65534, 65534));
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        assert_eq!(crate::secure_file::read(&cookie).unwrap(), b"cache");
+        // A pre-existing cache keeps its own owner, even if the config differs.
+        let file = std::fs::File::open(&cookie).unwrap();
+        assert_eq!(unsafe { libc::fchown(file.as_raw_fd(), 65533, 65533) }, 0);
+        crate::secure_file::write_with_owner_fallback(&cookie, b"new", Some(&path)).unwrap();
+        let metadata = std::fs::metadata(&cookie).unwrap();
+        assert_eq!((metadata.uid(), metadata.gid()), (65533, 65533));
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        assert_eq!(crate::secure_file::read(&cookie).unwrap(), b"new");
+        let absent = home.join("absent.json");
+        let failed = home.join("failed-cookie.json");
+        assert!(
+            crate::secure_file::write_with_owner_fallback(&failed, b"no", Some(&absent)).is_err()
+        );
+        assert!(!failed.exists());
+    }
 }

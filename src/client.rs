@@ -5,7 +5,7 @@ use std::path;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use std::{fs, io};
+use std::io;
 
 use anyhow::{anyhow, bail, Context, Result};
 use cookie::Cookie as RawCookie;
@@ -37,6 +37,22 @@ const SIGN_ROOT_KEY_VERSION: u64 = 1;
 const SIGN_SECRET: &[u8] = b"TOK@@AoNfRIX+3bla%";
 const SIGN_HASH_BLOCK_SIZE: usize = 64;
 const SIGN_HASH_OUTPUT_SIZE: usize = 32;
+
+fn cookie_filename(interface_name: &str) -> Result<String> {
+    // This field names an interface, not a path: keep its generated cookie file
+    // under the selected cache directory. Validate the final, suffixed name.
+    let filename = format!("{interface_name}_{COOKIE_FILE_SUFFIX}");
+    let mut components = path::Path::new(&filename).components();
+    if !matches!(components.next(), Some(path::Component::Normal(_))) || components.next().is_some() {
+        bail!("interface name must not redirect the cookie file to another directory");
+    }
+    // NTFS's name:stream syntax selects an alternate stream rather than a file.
+    #[cfg(windows)]
+    if filename.contains(':') {
+        bail!("interface name must not select a Windows drive or file stream");
+    }
+    Ok(filename)
+}
 
 fn merge_additional_routes(
     mut routes: Vec<String>,
@@ -269,25 +285,44 @@ impl Client {
             .interface_name
             .clone()
             .context("interface name missing in config")?;
+        let cookie_name = cookie_filename(&interface_name)?;
         let dir = match path::Path::new(&f).parent() {
             Some(dir) => dir,
             None => path::Path::new("."),
         };
-        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
+        let cookie_file = dir.join(cookie_name);
         log::info!("cookie file is: {}", cookie_file.to_string_lossy());
 
-        let mut cookie_store = {
-            let file = fs::File::open(&cookie_file).map(io::BufReader::new);
-            match file {
-                Ok(file) => CookieStore::load_json_all(file).unwrap_or_else(|e| {
-                    log::warn!(
-                        "failed to load cookie store from {}, using empty store: {e}",
-                        cookie_file.display()
-                    );
+        // Preserve the existing line-oriented cookie file format during this
+        // security update. The dependency's replacement serde API uses an array.
+        #[allow(deprecated)]
+        let mut cookie_store = match crate::secure_file::read(&cookie_file) {
+            Ok(bytes) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if std::fs::symlink_metadata(&cookie_file)?
+                        .permissions()
+                        .mode()
+                        & 0o777
+                        != 0o600
+                    {
+                        crate::secure_file::write(&cookie_file, &bytes)?;
+                    }
+                }
+                CookieStore::load_json_all(io::Cursor::new(bytes)).unwrap_or_else(|_| {
+                    log::warn!("failed to parse cookie store, using empty store");
                     CookieStore::default()
-                }),
-                Err(_) => CookieStore::default(),
+                })
             }
+            Err(error)
+                if error
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.kind() == io::ErrorKind::NotFound) =>
+            {
+                CookieStore::default()
+            }
+            Err(error) => return Err(error).context("failed to safely read cookie store"),
         };
         let has_expired = cookie_store.iter_any().any(|cookie| cookie.is_expired());
         if has_expired {
@@ -364,26 +399,20 @@ impl Client {
             Some(dir) => dir,
             None => path::Path::new("."),
         };
-        let cookie_file = dir.join(format!("{}_{}", interface_name, COOKIE_FILE_SUFFIX));
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .append(false)
-            .open(&cookie_file)
-            .map(io::BufWriter::new)
-            .with_context(|| {
-                format!(
-                    "failed to open cookie file for writing: {}",
-                    cookie_file.display()
-                )
-            })?;
+        let cookie_file = dir.join(cookie_filename(interface_name)?);
+        let mut bytes = Vec::new();
         let c = self
             .cookie
             .lock()
             .map_err(|e| anyhow!("failed to lock cookie store: {e}"))?;
-        c.save_json(&mut file)
-            .or_else(|e| bail!("failed to persist cookies to disk: {e}"))?;
+        #[allow(deprecated)] // Keep compatibility with existing cookie files.
+        c.save_json(&mut bytes)
+            .map_err(|_| anyhow!("failed to serialize cookie store"))?;
+        crate::secure_file::write_with_owner_fallback(
+            &cookie_file,
+            &bytes,
+            Some(path::Path::new(f)),
+        )?;
         Ok(())
     }
 
@@ -1878,6 +1907,14 @@ mod tests {
         ));
         std::fs::create_dir(&directory).unwrap();
         client.conf.conf_file = Some(directory.join("config.json").to_string_lossy().into());
+        let config_file = directory.join("config.json");
+        std::fs::write(&config_file, serde_json::to_vec(&client.conf).unwrap()).unwrap();
+        #[cfg(unix)]
+        if unsafe { libc::geteuid() } == 0 {
+            use std::os::fd::AsRawFd;
+            let file = std::fs::File::open(&config_file).unwrap();
+            assert_eq!(unsafe { libc::fchown(file.as_raw_fd(), 65534, 65534) }, 0);
+        }
         let cookie_file = directory.join(format!(
             "{}_cookies.json",
             client.conf.interface_name.as_ref().unwrap()
@@ -1896,6 +1933,14 @@ mod tests {
         };
         insert("x".repeat(256));
         client.save_cookie().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let config = std::fs::metadata(&config_file).unwrap();
+            let cookie = std::fs::metadata(&cookie_file).unwrap();
+            assert_eq!((cookie.uid(), cookie.gid()), (config.uid(), config.gid()));
+            assert_eq!(cookie.mode() & 0o777, 0o600);
+        }
         let previous_size = std::fs::metadata(&cookie_file).unwrap().len();
         insert("short".into());
         client.save_cookie().unwrap();
@@ -2172,5 +2217,37 @@ mod tests {
         let routes = resolve_additional_domains(&["127.0.0.1".to_string()], false).await;
 
         assert_eq!(routes, vec!["127.0.0.1/32"]);
+    }
+
+    #[test]
+    fn cookie_filename_stays_in_the_cache_directory() {
+        for name in ["../escape", "dir/name", "/absolute", "./relative"] {
+            assert!(super::cookie_filename(name).is_err(), "accepted path: {name}");
+        }
+        // The suffix makes these ordinary basenames; rejecting the raw input
+        // as a device name or trailing dot/space was unnecessarily restrictive.
+        for name in [
+            "corplink", "utun3", "Ethernet 2", "CON", "COM1", ".", "..", "name.", "name ",
+        ] {
+            let filename = super::cookie_filename(name).unwrap();
+            assert_eq!(filename, format!("{name}_cookies.json"));
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join(filename);
+            crate::secure_file::write(&path, b"cookie fixture").unwrap();
+            assert_eq!(crate::secure_file::read(&path).unwrap(), b"cookie fixture");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cookie_filename_rejects_windows_path_and_stream_syntax() {
+        for name in [
+            r"..\escape", r"dir\name", r"C:\absolute", "C:relative", "name:stream",
+        ] {
+            assert!(
+                super::cookie_filename(name).is_err(),
+                "accepted Windows path: {name}"
+            );
+        }
     }
 }
