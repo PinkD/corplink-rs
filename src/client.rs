@@ -408,7 +408,11 @@ impl Client {
         #[allow(deprecated)] // Keep compatibility with existing cookie files.
         c.save_json(&mut bytes)
             .map_err(|_| anyhow!("failed to serialize cookie store"))?;
-        crate::secure_file::write(&cookie_file, &bytes)?;
+        crate::secure_file::write_with_owner_fallback(
+            &cookie_file,
+            &bytes,
+            Some(path::Path::new(f)),
+        )?;
         Ok(())
     }
 
@@ -1903,6 +1907,14 @@ mod tests {
         ));
         std::fs::create_dir(&directory).unwrap();
         client.conf.conf_file = Some(directory.join("config.json").to_string_lossy().into());
+        let config_file = directory.join("config.json");
+        std::fs::write(&config_file, serde_json::to_vec(&client.conf).unwrap()).unwrap();
+        #[cfg(unix)]
+        if unsafe { libc::geteuid() } == 0 {
+            use std::os::fd::AsRawFd;
+            let file = std::fs::File::open(&config_file).unwrap();
+            assert_eq!(unsafe { libc::fchown(file.as_raw_fd(), 65534, 65534) }, 0);
+        }
         let cookie_file = directory.join(format!(
             "{}_cookies.json",
             client.conf.interface_name.as_ref().unwrap()
@@ -1921,6 +1933,14 @@ mod tests {
         };
         insert("x".repeat(256));
         client.save_cookie().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let config = std::fs::metadata(&config_file).unwrap();
+            let cookie = std::fs::metadata(&cookie_file).unwrap();
+            assert_eq!((cookie.uid(), cookie.gid()), (config.uid(), config.gid()));
+            assert_eq!(cookie.mode() & 0o777, 0o600);
+        }
         let previous_size = std::fs::metadata(&cookie_file).unwrap().len();
         insert("short".into());
         client.save_cookie().unwrap();

@@ -59,6 +59,16 @@ pub fn read(path: &Path) -> Result<Vec<u8>> {
 }
 
 pub fn write(path: &Path, data: &[u8]) -> Result<()> {
+    write_with_owner_fallback(path, data, None)
+}
+
+// A new cache written by root should belong to the associated config owner.
+// Existing files keep their own owner; ordinary config writes have no fallback.
+pub fn write_with_owner_fallback(
+    path: &Path,
+    data: &[u8],
+    owner_source: Option<&Path>,
+) -> Result<()> {
     let path = resolved(path, true)?;
     let existing = match fs::symlink_metadata(&path) {
         Ok(metadata) => {
@@ -78,20 +88,27 @@ pub fn write(path: &Path, data: &[u8]) -> Result<()> {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         // sudo commonly reads a user's existing config from their home. Keep
         // that file's owner instead of making it unreadable to them after save.
-        if let Some(metadata) = existing
-            .as_ref()
-            .filter(|_| unsafe { libc::geteuid() } == 0)
-        {
-            let result = unsafe {
-                libc::fchown(
-                    temporary.as_file().as_raw_fd(),
-                    metadata.uid(),
-                    metadata.gid(),
-                )
+        if unsafe { libc::geteuid() } == 0 {
+            let owner = match existing {
+                Some(metadata) => Some(metadata),
+                None => owner_source
+                    .map(fs::symlink_metadata)
+                    .transpose()
+                    .context("failed to read fallback file owner")?,
             };
-            if result != 0 {
-                return Err(std::io::Error::last_os_error())
-                    .context("failed to preserve secret file owner");
+            if let Some(metadata) = owner {
+                check_file(&metadata)?;
+                let result = unsafe {
+                    libc::fchown(
+                        temporary.as_file().as_raw_fd(),
+                        metadata.uid(),
+                        metadata.gid(),
+                    )
+                };
+                if result != 0 {
+                    return Err(std::io::Error::last_os_error())
+                        .context("failed to preserve secret file owner");
+                }
             }
         }
         temporary
@@ -99,7 +116,7 @@ pub fn write(path: &Path, data: &[u8]) -> Result<()> {
             .set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     #[cfg(not(unix))]
-    let _ = existing;
+    let _ = (existing, owner_source);
     temporary.write_all(data)?;
     temporary.as_file().sync_all()?;
     temporary

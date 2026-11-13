@@ -286,5 +286,26 @@ mod tests {
         let parent = std::fs::metadata(&home).unwrap();
         assert_eq!((parent.uid(), parent.gid()), (65534, 65534));
         assert_eq!(parent.mode() & 0o777, 0o700);
+
+        let cookie = home.join("cookies.json");
+        crate::secure_file::write_with_owner_fallback(&cookie, b"cache", Some(&path)).unwrap();
+        let metadata = std::fs::metadata(&cookie).unwrap();
+        assert_eq!((metadata.uid(), metadata.gid()), (65534, 65534));
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        assert_eq!(crate::secure_file::read(&cookie).unwrap(), b"cache");
+        // A pre-existing cache keeps its own owner, even if the config differs.
+        let file = std::fs::File::open(&cookie).unwrap();
+        assert_eq!(unsafe { libc::fchown(file.as_raw_fd(), 65533, 65533) }, 0);
+        crate::secure_file::write_with_owner_fallback(&cookie, b"new", Some(&path)).unwrap();
+        let metadata = std::fs::metadata(&cookie).unwrap();
+        assert_eq!((metadata.uid(), metadata.gid()), (65533, 65533));
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        assert_eq!(crate::secure_file::read(&cookie).unwrap(), b"new");
+        let absent = home.join("absent.json");
+        let failed = home.join("failed-cookie.json");
+        assert!(
+            crate::secure_file::write_with_owner_fallback(&failed, b"no", Some(&absent)).is_err()
+        );
+        assert!(!failed.exists());
     }
 }
