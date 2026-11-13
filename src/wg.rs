@@ -186,14 +186,13 @@ fn cidr(value: &str, field: &str, require_prefix: bool) -> Result<String> {
     Ok(format!("{address}/{prefix}"))
 }
 
-fn endpoint(value: &str) -> Result<String> {
-    // The WireGuard UAPI endpoint is IP:port or [IPv6]:port. Its Go bind
-    // parses a numeric address too; it does not resolve DNS hostnames here.
-    let addr: SocketAddr = value
-        .parse()
-        .context("endpoint must be an IP address and port")?;
-    ensure!(addr.port() != 0, "endpoint port must be nonzero");
-    Ok(addr.to_string())
+fn endpoint(value: &str) -> Result<&str> {
+    // Keep one UAPI value intact; the native bind validates endpoint syntax.
+    ensure!(
+        !value.bytes().any(|b| matches!(b, b'\n' | b'\r' | b'\0')),
+        "endpoint contains a UAPI delimiter or null character"
+    );
+    Ok(value)
 }
 
 fn key_hex(value: &str, field: &str) -> Result<String> {
@@ -440,35 +439,39 @@ mod tests {
     }
 
     #[test]
-    fn invalid_keys_addresses_and_endpoints_fail_before_ffi() {
+    fn invalid_keys_and_addresses_fail_before_ffi() {
         let mut conf = config();
         conf.private_key = base64::engine::general_purpose::STANDARD.encode([1; 31]);
         assert!(build_uapi_config(&conf, false).is_err());
         assert!(cidr("10.0.0.1/33", "test", true).is_err());
         assert!(cidr("::1/129", "test", true).is_err());
-        for invalid in [
+    }
+
+    #[test]
+    fn endpoint_preserves_syntax_for_native_parser() {
+        for value in [
             "192.0.2.1:0",
+            "192.0.2.1:1",
+            "192.0.2.1:65535",
+            "192.0.2.1:00080",
+            "[2001:db8::1]:51820",
+            "[::ffff:192.0.2.1]:51820",
+            "[fe80::1%3]:51820",
+            "[fe80::1%en0]:51820",
+            // Invalid native syntax is also left for the native parser.
+            "vpn.example:51820",
+            "test.com.:1234",
             "192.0.2.1:+80",
             "192.0.2.1:65536",
             "2001:db8::1:51820",
         ] {
-            assert!(endpoint(invalid).is_err());
-        }
-    }
-
-    #[test]
-    fn endpoint_uses_numeric_uapi_address_forms() {
-        for value in [
-            "192.0.2.1:1",
-            "192.0.2.1:65535",
-            "[2001:db8::1]:51820",
-            "[::ffff:192.0.2.1]:51820",
-            "[fe80::1%3]:51820",
-        ] {
-            assert!(endpoint(value).is_ok(), "{value}");
-        }
-        for value in ["vpn.example:51820", "test.com.:1234", "[fe80::1%en0]:51820"] {
-            assert!(endpoint(value).is_err(), "{value}");
+            assert_eq!(endpoint(value).unwrap(), value);
+            let mut conf = config();
+            conf.peer_address = value.into();
+            for netstack in [false, true] {
+                let uapi = build_uapi_config(&conf, netstack).unwrap();
+                assert!(uapi.lines().any(|line| line == format!("endpoint={value}")));
+            }
         }
     }
 
@@ -482,6 +485,7 @@ mod tests {
         for value in [
             injected,
             "192.0.2.1:51820\r\nremove=true",
+            "192.0.2.1:51820\r",
             "192.0.2.1:51820\0",
         ] {
             let mut conf = config();
