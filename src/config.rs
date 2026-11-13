@@ -247,4 +247,44 @@ mod tests {
         );
         assert!(Config::from_file(path.to_str().unwrap()).await.is_ok());
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn root_migration_preserves_user_owned_config() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if unsafe { libc::geteuid() } != 0 {
+            eprintln!("requires root; run this exact test under sudo in CI");
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("user-home");
+        std::fs::create_dir(&home).unwrap();
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let path = home.join("config.json");
+        std::fs::write(
+            &path,
+            br#"{"company_name":"test","username":"owner-test","server":"https://example.test"}"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // Model sudo using a normal user's home/config, without changing any
+        // account or touching that user's actual home directory.
+        for fixture in [&home, &path] {
+            let file = std::fs::File::open(fixture).unwrap();
+            assert_eq!(unsafe { libc::fchown(file.as_raw_fd(), 65534, 65534) }, 0);
+        }
+        let conf = Config::from_file(path.to_str().unwrap()).await.unwrap();
+        assert_eq!(conf.username, "owner-test");
+        assert!(conf.private_key.is_some());
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!((metadata.uid(), metadata.gid()), (65534, 65534));
+        assert_eq!(metadata.mode() & 0o777, 0o600);
+        let saved: Config = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.username, conf.username);
+        assert_eq!(saved.private_key, conf.private_key);
+        let parent = std::fs::metadata(&home).unwrap();
+        assert_eq!((parent.uid(), parent.gid()), (65534, 65534));
+        assert_eq!(parent.mode() & 0o777, 0o700);
+    }
 }
