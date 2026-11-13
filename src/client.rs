@@ -13,13 +13,13 @@ use cookie_store::{Cookie, CookieStore};
 use futures::stream::{FuturesUnordered, StreamExt};
 use reqwest::cookie::CookieStore as ReqwestCookieStore;
 use reqwest::header;
-use reqwest::{ClientBuilder, Response, Url};
+use reqwest::{Response, Url};
 use reqwest_cookie_store::CookieStoreMutex;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Map, Value};
 use sha2::Digest;
 
-use crate::api::{ApiName, ApiUrl, CORPLINK_APP_VERSION, URL_GET_COMPANY};
+use crate::api::{ApiName, ApiUrl, URL_GET_COMPANY};
 use crate::config::{
     Config, WgConf, PLATFORM_CORPLINK, PLATFORM_CORPLINK_V1, PLATFORM_LARK, PLATFORM_LDAP,
     PLATFORM_OIDC, STRATEGY_DEFAULT, STRATEGY_LATENCY,
@@ -199,18 +199,6 @@ fn encode_sign_header(signing_input_params: u64, signing_result: &[u8]) -> Strin
     )
 }
 
-fn corplink_client_builder() -> ClientBuilder {
-    ClientBuilder::new()
-        // CorpLink deployments may use certificates signed by their own CA.
-        .danger_accept_invalid_certs(true)
-        // for debug
-        // .proxy(reqwest::Proxy::all("socks5://192.168.111.233:8001").unwrap())
-        .user_agent(format!(
-            "CorpLink/{CORPLINK_APP_VERSION} (linux; Linux; en)"
-        ))
-        .timeout(Duration::from_millis(10000))
-}
-
 #[derive(Clone)]
 pub struct Client {
     conf: Config,
@@ -231,14 +219,8 @@ struct SelectedVpn {
     set_cookie_headers: Vec<header::HeaderValue>,
 }
 
-unsafe impl Send for Client {}
-
-unsafe impl Sync for Client {}
-
 pub async fn get_company_url(code: &str) -> anyhow::Result<RespCompany> {
-    let c = ClientBuilder::new()
-        // allow invalid certs because this cert is signed by corplink
-        .danger_accept_invalid_certs(true)
+    let c = crate::transport::client_builder(None)?
         .build()
         .context("build client")?;
     let mut m = Map::new();
@@ -255,7 +237,11 @@ pub async fn get_company_url(code: &str) -> anyhow::Result<RespCompany> {
         .await
         .context("parse company resp")?;
     match resp.code {
-        0 => resp.data.context("company response missing data"),
+        0 => {
+            let company = resp.data.context("company response missing data")?;
+            crate::transport::validate_server_url(&company.domain)?;
+            Ok(company)
+        },
         _ => Err(anyhow!(resp
             .message
             .unwrap_or_else(|| "failed to fetch company info".to_string()))),
@@ -297,8 +283,7 @@ impl Client {
         let mut headers = header::HeaderMap::new();
 
         if let Some(server) = conf.server.as_ref() {
-            let server_url = Url::from_str(server.as_str())
-                .with_context(|| format!("invalid server url: {server}"))?;
+            let server_url = crate::transport::validate_server_url(server)?;
 
             if let Some(device_id) = conf.device_id.as_ref() {
                 cookie_store
@@ -323,11 +308,11 @@ impl Client {
         let cookie_store = Arc::new(CookieStoreMutex::new(cookie_store));
 
         // Keep probe responses out of the shared cookie store until an endpoint is selected.
-        let probe_client = corplink_client_builder()
+        let probe_client = crate::transport::client_builder(conf.ca_cert_file.as_deref())?
             .default_headers(headers.clone())
             .build()
             .context("build VPN probe HTTP client")?;
-        let c = corplink_client_builder()
+        let c = crate::transport::client_builder(conf.ca_cert_file.as_deref())?
             .cookie_provider(Arc::clone(&cookie_store))
             .default_headers(headers)
             .build()
@@ -1151,27 +1136,7 @@ impl Client {
     }
 
     fn vpn_endpoint_url(&self, host: &str, api_port: u16) -> Result<Url> {
-        let server_url = self
-            .conf
-            .server
-            .as_ref()
-            .context("server url is required to configure vpn endpoint")?;
-        let server_url = Url::from_str(server_url)
-            .with_context(|| format!("invalid server url: {server_url}"))?;
-        let mut endpoint_url = Url::parse(&format!("{}://localhost", server_url.scheme()))
-            .context("failed to construct vpn endpoint URL")?;
-        match host.parse::<IpAddr>() {
-            Ok(ip) => endpoint_url
-                .set_ip_host(ip)
-                .map_err(|_| anyhow!("failed to set vpn endpoint IP"))?,
-            Err(_) => endpoint_url
-                .set_host(Some(host))
-                .context("failed to set vpn endpoint host")?,
-        }
-        endpoint_url
-            .set_port(Some(api_port))
-            .map_err(|_| anyhow!("failed to set vpn endpoint port"))?;
-        Ok(endpoint_url)
+        crate::transport::vpn_endpoint_url(host, api_port)
     }
 
     fn probe_cookie_header(&self) -> Result<Option<header::HeaderValue>> {
@@ -1180,8 +1145,7 @@ impl Client {
             .server
             .as_ref()
             .context("server url is required to prepare VPN probe cookies")?;
-        let server_url = Url::from_str(server_url)
-            .with_context(|| format!("invalid server url: {server_url}"))?;
+        let server_url = crate::transport::validate_server_url(server_url)?;
         Ok(ReqwestCookieStore::cookies(
             self.cookie.as_ref(),
             &server_url,
@@ -1200,8 +1164,7 @@ impl Client {
             .as_ref()
             .context("server url is required to configure vpn endpoint")?;
 
-        let server_url = Url::from_str(server_url)
-            .with_context(|| format!("invalid server url: {server_url}"))?;
+        let server_url = crate::transport::validate_server_url(server_url)?;
         let cookies: Vec<Cookie> = cookie_store
             .iter_any()
             .filter(|cookie| !cookie.is_expired() && cookie.domain.matches(&server_url))
@@ -1378,6 +1341,7 @@ impl Client {
             &endpoint_url,
         );
         self.save_cookie()?;
+        crate::transport::vpn_endpoint_url(&vpn.ip, vpn.vpn_port)?;
         let vpn_addr = match vpn.ip.parse::<IpAddr>() {
             Ok(ip) => SocketAddr::new(ip, vpn.vpn_port).to_string(),
             Err(_) => format!("{}:{}", vpn.ip, vpn.vpn_port),
@@ -1797,7 +1761,12 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         let (request_tx, request_rx) = oneshot::channel();
         let task = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = crate::transport::tests::tls_fixture()
+                .1
+                .accept(stream)
+                .await
+                .unwrap();
             let mut request = Vec::new();
             let mut buffer = [0_u8; 1024];
             loop {
@@ -1848,7 +1817,7 @@ mod tests {
         let mut conf: Config = serde_json::from_value(json!({
             "company_name": "test",
             "username": "test",
-            "server": "http://127.0.0.1",
+            "server": "https://127.0.0.1",
             "interface_name": format!("corplink-probe-test-{unique}"),
             "device_id": "test-device"
         }))
@@ -1859,12 +1828,28 @@ mod tests {
                 .to_string_lossy()
                 .into_owned(),
         );
-        Client::new(conf).unwrap()
+        let ca = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(ca.path(), &crate::transport::tests::tls_fixture().0).unwrap();
+        conf.ca_cert_file = Some(ca.path().to_string_lossy().into_owned());
+        let mut client = Client::new(conf.clone()).unwrap();
+        // Loopback tests must not use a developer's system proxy.
+        client.c = crate::transport::client_builder(conf.ca_cert_file.as_deref())
+            .unwrap()
+            .no_proxy()
+            .cookie_provider(Arc::clone(&client.cookie))
+            .build()
+            .unwrap();
+        client.probe_client = crate::transport::client_builder(conf.ca_cert_file.as_deref())
+            .unwrap()
+            .no_proxy()
+            .build()
+            .unwrap();
+        client
     }
 
     fn test_client_for_server(port: u16) -> Client {
         let mut client = test_client();
-        client.conf.server = Some(format!("http://127.0.0.1:{port}"));
+        client.conf.server = Some(format!("https://127.0.0.1:{port}"));
         client.api_url = ApiUrl::new(&client.conf).unwrap();
         client
     }
@@ -1882,7 +1867,7 @@ mod tests {
             "{}_cookies.json",
             client.conf.interface_name.as_ref().unwrap()
         ));
-        let url = reqwest::Url::parse("http://127.0.0.1/").unwrap();
+        let url = reqwest::Url::parse("https://127.0.0.1/").unwrap();
         let insert = |value: String| {
             let cookie = cookie::Cookie::build(("fixture", value))
                 .max_age(cookie::time::Duration::hours(1))
@@ -1920,7 +1905,12 @@ mod tests {
         let capture = tokio::spawn(async move {
             let mut requests = Vec::new();
             for _ in 0..2 {
-                let (mut stream, _) = listener.accept().await.unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut stream = crate::transport::tests::tls_fixture()
+                    .1
+                    .accept(stream)
+                    .await
+                    .unwrap();
                 let mut bytes = Vec::new();
                 let mut buffer = [0_u8; 1024];
                 loop {
@@ -2105,9 +2095,9 @@ mod tests {
     }
 
     #[test]
-    fn vpn_endpoint_urls_use_server_scheme_and_candidate_host() {
+    fn vpn_endpoint_urls_are_https_and_use_validated_candidate_hosts() {
         let mut client = test_client();
-        client.conf.server = Some("https://127.0.0.1/base?source=config#fragment".to_string());
+        client.conf.server = Some("https://127.0.0.1/base".to_string());
 
         let hostname_endpoint = client
             .vpn_endpoint_url("vpn-node.example.com", 8443)
