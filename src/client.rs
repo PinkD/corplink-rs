@@ -1869,9 +1869,9 @@ mod tests {
         ));
         let url = reqwest::Url::parse("https://127.0.0.1/").unwrap();
         let insert = |value: String| {
-            let cookie = cookie::Cookie::build("fixture", value)
+            let cookie = cookie::Cookie::build(("fixture", value))
                 .max_age(cookie::time::Duration::hours(1))
-                .finish();
+                .build();
             client
                 .cookie
                 .lock()
