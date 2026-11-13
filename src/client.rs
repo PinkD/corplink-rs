@@ -39,33 +39,19 @@ const SIGN_HASH_BLOCK_SIZE: usize = 64;
 const SIGN_HASH_OUTPUT_SIZE: usize = 32;
 
 fn cookie_filename(interface_name: &str) -> Result<String> {
-    // Validate on every platform, including Windows drive-relative paths,
-    // NTFS alternate data streams, reserved devices and normalized names.
-    let stem = interface_name
-        .split('.')
-        .next()
-        .unwrap_or("")
-        .to_ascii_uppercase();
-    let reserved_device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-        || ["COM", "LPT"].iter().any(|prefix| {
-            stem.strip_prefix(prefix).is_some_and(|suffix| {
-                matches!(
-                    suffix,
-                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                )
-            })
-        });
-    if interface_name.is_empty()
-        || matches!(interface_name, "." | "..")
-        || interface_name.ends_with(['.', ' '])
-        || reserved_device
-        || interface_name
-            .chars()
-            .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
-    {
-        bail!("interface name is not a portable cookie file basename");
+    // This field names an interface, not a path: keep its generated cookie file
+    // under the selected cache directory. Validate the final, suffixed name.
+    let filename = format!("{interface_name}_{COOKIE_FILE_SUFFIX}");
+    let mut components = path::Path::new(&filename).components();
+    if !matches!(components.next(), Some(path::Component::Normal(_))) || components.next().is_some() {
+        bail!("interface name must not redirect the cookie file to another directory");
     }
-    Ok(format!("{interface_name}_{COOKIE_FILE_SUFFIX}"))
+    // NTFS's name:stream syntax selects an alternate stream rather than a file.
+    #[cfg(windows)]
+    if filename.contains(':') {
+        bail!("interface name must not select a Windows drive or file stream");
+    }
+    Ok(filename)
 }
 
 fn merge_additional_routes(
@@ -2212,48 +2198,35 @@ mod tests {
 
         assert_eq!(routes, vec!["127.0.0.1/32"]);
     }
+
     #[test]
-    fn cookie_filenames_reject_cross_platform_path_and_device_syntax() {
+    fn cookie_filename_stays_in_the_cache_directory() {
+        for name in ["../escape", "dir/name", "/absolute", "./relative"] {
+            assert!(super::cookie_filename(name).is_err(), "accepted path: {name}");
+        }
+        // The suffix makes these ordinary basenames; rejecting the raw input
+        // as a device name or trailing dot/space was unnecessarily restrictive.
         for name in [
-            "",
-            ".",
-            "..",
-            "../escape",
-            "dir/name",
-            r"dir\name",
-            "C:foo",
-            "name:stream",
-            "name<file",
-            "name>file",
-            "name\"file",
-            "name|file",
-            "name?file",
-            "name*file",
-            "name\n",
-            "name\0",
-            "name.",
-            "name ",
-            "CON",
-            "nul.txt",
-            "COM1",
-            "lpt9.txt",
-            "COM¹",
+            "corplink", "utun3", "Ethernet 2", "CON", "COM1", ".", "..", "name.", "name ",
+        ] {
+            let filename = super::cookie_filename(name).unwrap();
+            assert_eq!(filename, format!("{name}_cookies.json"));
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join(filename);
+            crate::secure_file::write(&path, b"cookie fixture").unwrap();
+            assert_eq!(crate::secure_file::read(&path).unwrap(), b"cookie fixture");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cookie_filename_rejects_windows_path_and_stream_syntax() {
+        for name in [
+            r"..\escape", r"dir\name", r"C:\absolute", "C:relative", "name:stream",
         ] {
             assert!(
                 super::cookie_filename(name).is_err(),
-                "accepted unsafe basename: {name:?}"
-            );
-        }
-        for name in [
-            "corplink",
-            "utun3",
-            "vpn_test-2",
-            "vpn.example",
-            "Ethernet 2",
-        ] {
-            assert_eq!(
-                super::cookie_filename(name).unwrap(),
-                format!("{name}_cookies.json")
+                "accepted Windows path: {name}"
             );
         }
     }

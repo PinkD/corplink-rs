@@ -229,11 +229,21 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let alias = directory.path().join("config-backup.json");
+        std::fs::hard_link(&path, &alias).unwrap();
+        let original = std::fs::read(&alias).unwrap();
         let conf = Config::from_file(path.to_str().unwrap()).await.unwrap();
         assert!(conf.private_key.is_some());
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
+        );
+        // Loading and migrating must replace only the selected pathname; neither
+        // reading nor saving may change a hard-linked backup's bytes or mode.
+        assert_eq!(std::fs::read(&alias).unwrap(), original);
+        assert_eq!(
+            std::fs::metadata(&alias).unwrap().permissions().mode() & 0o777,
+            0o644
         );
         assert!(Config::from_file(path.to_str().unwrap()).await.is_ok());
     }
